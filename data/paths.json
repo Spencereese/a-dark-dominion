@@ -1,0 +1,42 @@
+{
+  "vein_of_fading_echoes": {
+    "name": "Vein of Fading Echoes",
+    "desc": "A seam where old voices still hum. The foragers spoke of warmth along lines like this.",
+    "cost": {"shards": 20},
+    "travel_time": 6,
+    "moral_options": [
+      {"id": "listen", "label": "Listen and Offer Passage", "alignment": 0.06, "rewards": {"resonance": 9, "vitalis": 4}, "log": "They return carrying faint songs.", "revelation": "The echoes were not lost. They were waiting. The paths you marked for foraging only ever heard the edge of it."},
+      {"id": "harvest", "label": "Cut the Vein for Quick Shards", "alignment": -0.09, "rewards": {"shards": 28, "resonance": 2}, "log": "The ash here is richer, but quieter now.", "revelation": "The lines you marked for foraging led straight here. You did not find new ground—you followed the old scars to their source. The first claim was made long before any foot stepped on this vein."}
+    ]
+  },
+  "shattered_crossing": {
+    "name": "Shattered Crossing",
+    "desc": "Where paths once met. Remnants of the lost who never reached a Haven.",
+    "cost": {"shards": 15, "population": 1},
+    "travel_time": 8,
+    "moral_options": [
+      {"id": "respect", "label": "Respectful Salvage", "alignment": 0.04, "rewards": {"vitalis": 6, "resonance": 5}, "log": "Some walk back with them.", "revelation": "These crossings were always part of the circle. Foraging was never just gathering—it was the first claim."},
+      {"id": "strip", "label": "Strip What Remains", "alignment": -0.08, "rewards": {"shards": 22}, "log": "Quick gain. The crossing is silent now.", "revelation": "You sent the lost to take what the ash had already taken. The pattern repeats."}
+    ]
+  },
+  "hollow_of_silent_bound": {
+    "name": "Hollow of the Silent Bound",
+    "desc": "A depression that pulls at the Will. Echoes of those who chose the ember too completely.",
+    "cost": {"shards": 12},
+    "travel_time": 5,
+    "moral_options": [
+      {"id": "parley", "label": "Parley with the Echoes", "alignment": 0.07, "rewards": {"resonance": 7}, "log": "An uneasy accord. They return changed but whole.", "revelation": "The Bound here recognize the Hearth's pull. You are not the first to offer warmth in the ash."},
+      {"id": "overwhelm", "label": "Overwhelm and Bind", "alignment": -0.11, "rewards": {"shards": 18, "vitalis": 2}, "log": "They submit. The hollow is yours.", "revelation": "Demanding more from those within the circle was practice. Here it becomes dominion. The choice at the havens taught everyone what the ash already knew."}
+    ]
+  },
+  "vein_of_broken_circles": {
+    "name": "Vein of Broken Circles",
+    "desc": "Fractures where gatherings once held. The ash remembers circles closed too tightly.",
+    "cost": {"shards": 17},
+    "travel_time": 7,
+    "moral_options": [
+      {"id": "listen", "label": "Listen and Mend the Circles", "alignment": 0.05, "rewards": {"resonance": 10, "vitalis": 3}, "log": "They return carrying shared silences.", "revelation": "The broken circles waited for the lines you marked. The choice in the havens only named what the weight of the first ember had already bound before."},
+      {"id": "claim", "label": "Claim the Fractures", "alignment": -0.09, "rewards": {"shards": 26, "resonance": 2}, "log": "The fractures yield. Quiet follows the gain.", "revelation": "You bound them here as the first were bound. The paths you marked were never new ground—they retraced what was claimed long before any foot stepped on this vein."}
+    ]
+  }
+}

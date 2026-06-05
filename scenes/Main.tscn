@@ -1,0 +1,203 @@
+[gd_scene load_steps=3 format=3 uid="uid://mainscene001"]
+
+[ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
+[ext_resource type="Theme" path="res://resources/dark_theme.tres" id="2_theme"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dark_panel"]
+bg_color = Color(0.03, 0.025, 0.035, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.18, 0.15, 0.14, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+script = ExtResource("1_main")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.015, 0.012, 0.022, 1)
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="TopBar" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="Margin/VBox/TopBar"]
+layout_mode = 2
+text = "A Dark Dominion"
+theme_override_font_sizes/font_size = 22
+theme_override_colors/font_color = Color(0.75, 0.7, 0.6, 1)
+
+[node name="StatusLabel" type="Label" parent="Margin/VBox/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Phase: dark"
+theme_override_font_sizes/font_size = 14
+theme_override_colors/font_color = Color(0.6, 0.58, 0.55, 1)
+horizontal_alignment = 2
+
+[node name="HSeparator" type="HSeparator" parent="Margin/VBox"]
+layout_mode = 2
+
+[node name="Resources" type="HBoxContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="AlignmentSection" type="HBoxContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="AlignLabel" type="Label" parent="Margin/VBox/AlignmentSection"]
+layout_mode = 2
+text = "Weight:"
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.5, 0.48, 0.45, 1)
+
+[node name="AlignmentBar" type="ProgressBar" parent="Margin/VBox/AlignmentSection"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -1.0
+max_value = 1.0
+value = 0.0
+show_percentage = false
+
+[node name="MainArea" type="HBoxContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 400)
+theme_override_constants/separation = 20
+
+[node name="LogPanel" type="PanelContainer" parent="Margin/VBox/MainArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_dark_panel")
+
+[node name="LogMargin" type="MarginContainer" parent="Margin/VBox/MainArea/LogPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 8
+
+[node name="StoryLog" type="RichTextLabel" parent="Margin/VBox/MainArea/LogPanel/LogMargin"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+text = ""
+scroll_following = true
+theme_override_font_sizes/normal_font_size = 15
+theme_override_colors/default_color = Color(0.82, 0.78, 0.72, 1)
+
+[node name="ActionsPanel" type="PanelContainer" parent="Margin/VBox/MainArea"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 200)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_dark_panel")
+
+[node name="ActionsMargin" type="MarginContainer" parent="Margin/VBox/MainArea/ActionsPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="ActionsVBox" type="VBoxContainer" parent="Margin/VBox/MainArea/ActionsPanel/ActionsMargin"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="ActionsTitle" type="Label" parent="Margin/VBox/MainArea/ActionsPanel/ActionsMargin/ActionsVBox"]
+layout_mode = 2
+text = "Actions"
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0.9, 0.85, 0.75, 1)
+
+[node name="ActionsContainer" type="VBoxContainer" parent="Margin/VBox/MainArea/ActionsPanel/ActionsMargin/ActionsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="BottomBar" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SpeedButtons" type="HBoxContainer" parent="Margin/VBox/BottomBar"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PauseBtn" type="Button" parent="Margin/VBox/BottomBar/SpeedButtons"]
+layout_mode = 2
+text = "Pause"
+
+[node name="1xBtn" type="Button" parent="Margin/VBox/BottomBar/SpeedButtons"]
+layout_mode = 2
+text = "1x"
+
+[node name="5xBtn" type="Button" parent="Margin/VBox/BottomBar/SpeedButtons"]
+layout_mode = 2
+text = "5x"
+
+[node name="20xBtn" type="Button" parent="Margin/VBox/BottomBar/SpeedButtons"]
+layout_mode = 2
+text = "20x"
+
+[node name="Spacer" type="Control" parent="Margin/VBox/BottomBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ResetBtn" type="Button" parent="Margin/VBox/BottomBar/SpeedButtons"]
+layout_mode = 2
+text = "Reset (New Game)"
+tooltip_text = "Wipe save for testing a fresh run"
+
+[node name="Hint" type="Label" parent="Margin/VBox/BottomBar"]
+layout_mode = 2
+text = "Embers pierce the ash. Tend the central one."
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.45, 0.42, 0.38, 1)
+horizontal_alignment = 2

@@ -1,0 +1,43 @@
+{
+  "basic_sanctum": {
+    "name": "Basic Sanctum",
+    "cost": {},
+    "unlocks_at": {"phase": "hearth"},
+    "effects": {},
+    "moral_weight": 0.0,
+    "desc": "The first circle of protection around the Ember. The ash feels a little farther away."
+  },
+  "haven": {
+    "name": "Haven",
+    "cost": {"shards": 40},
+    "unlocks_at": {"resources": {"shards": 15}},
+    "effects": {
+      "pop": 2,
+      "rates": {"shards": 0.08, "resonance": 0.03}
+    },
+    "moral_weight": -0.08,
+    "unlock_log": "With enough shards, you could raise a proper Haven. The lost might stay.",
+    "desc": "A place for the lost to rest near the Ember. They offer their hands in return. They stay. The circle begins here."
+  },
+  "foraging_lines": {
+    "name": "Foraging Lines",
+    "cost": {"shards": 25},
+    "unlocks_at": {"phase": "village"},
+    "effects": {
+      "rates": {"resonance": 0.12, "vitalis": 0.08}
+    },
+    "moral_weight": -0.03,
+    "unlock_log": "The ash around the ember offers paths... and things that walk them.",
+    "desc": "Marked paths into the ash. Those who walk them return with more than fuel."
+  },
+
+  "watch_spire": {
+    "name": "Watch Spire",
+    "cost": {"shards": 60, "resonance": 10},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {"rates": {"shards": 0.04}, "defense": 1},
+    "moral_weight": -0.05,
+    "unlock_log": "A vein claimed. The ash now has watchers. The Watch Spire stands ready.",
+    "desc": "Eyes on the veins. It watches the ash as much as the ash watches it."
+  }
+}

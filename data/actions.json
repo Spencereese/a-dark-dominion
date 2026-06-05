@@ -1,0 +1,141 @@
+{
+  "nurture_ember": {
+    "name": "Nurture the Ember",
+    "tooltip": "Tend the central ember. The scattered ones stir in reply.",
+    "conditions": {
+      "phase": "dark",
+      "ember_pulse_lt": 1.0
+    },
+    "cost": {},
+    "effects": {
+      "ember_pulse": 4.0,
+      "shards_add": 2.0,
+      "phase": "hearth",
+      "unlock_building": "basic_sanctum",
+      "log": "You cup the ember in your hands. It answers with a flare. Scattered embers around you brighten. Shards of forgotten light pulse in the ash.",
+      "log_category": "story"
+    }
+  },
+  "feed_ember": {
+    "name": "Feed the Ember",
+    "tooltip": "Feed a shard to the central ember. The pulse strengthens; more embers glow.",
+    "conditions": {
+      "ember_pulse_lt": 10.0
+    },
+    "unlocks_at": {
+      "phase": "hearth"
+    },
+    "cost": {
+      "shards": 1
+    },
+    "effects": {
+      "ember_pulse_add": 3.0,
+      "log": "You feed the ember a shard. The pulse steadies. The dark retreats a step. Other embers glimmer in the ash.",
+      "log_category": "story"
+    }
+  },
+  "gather_shards": {
+    "name": "Gather Shards",
+    "tooltip": "Pull warm shards from the embers scattered in the ash. Fuel for the pulse.",
+    "conditions": {},
+    "unlocks_at": {
+      "phase": "hearth"
+    },
+    "cooldown": 8.0,
+    "cost": {},
+    "effects": {
+      "shards_add_base": 5.0,
+      "shards_add_per_pop": 0.1,
+      "call_hint": "check_first_shard_hints"
+    }
+  },
+  "raise_haven": {
+    "name": "Raise a Haven",
+    "tooltip": "A place for more of the lost to stay near the ember. (each brings more, but the weight adds up)",
+    "conditions": {
+      "unlocked_building": "haven"
+    },
+    "cost": {},
+    "effects": {
+      "build": "haven"
+    }
+  },
+  "set_foraging": {
+    "name": "Mark the Lines",
+    "tooltip": "Send them along marked lines in the ash. They return with more.",
+    "conditions": {
+      "unlocked_building": "foraging_lines"
+    },
+    "cost": {},
+    "effects": {
+      "build": "foraging_lines"
+    }
+  },
+  "demand_more": {
+    "name": "Demand More",
+    "tooltip": "Push them for more now. Gets results.",
+    "conditions": {
+      "pop_gte": 1
+    },
+    "unlocks_at": {
+      "pop": 3
+    },
+    "unlock_log": "A new thought occurs while watching the lost work the ash. It feels like the only natural next step.",
+    "cost": {},
+    "effects": {
+      "shards_add_per_pop": 0.8,
+      "set_flag": "demand_more_policy",
+      "align_delta": -0.03,
+      "log": "You reach deeper into them. 'Give more.' The ember brightens. Something in their eyes goes quiet. The ones who stayed at the first haven already knew this demand.",
+      "log_category": "revelation"
+    }
+  },
+  "assign_forager": {
+    "name": "Send Forager",
+    "tooltip": "Put a lost one to work the ash.",
+    "conditions": {
+      "free_pop_gte": 1
+    },
+    "cost": {},
+    "effects": {
+      "assign": "forager",
+      "delta": 1,
+      "log": "Another pair of hands sent into the ash.",
+      "log_category": "story"
+    }
+  },
+  "unassign_forager": {
+    "name": "Call Back Forager",
+    "tooltip": "Return them to the ember's light.",
+    "conditions": {
+      "assigned_forager_gte": 1
+    },
+    "cost": {},
+    "effects": {
+      "assign": "forager",
+      "delta": -1
+    }
+  },
+  "defend_paths": {
+    "name": "Defend the Paths",
+    "tooltip": "Spend shards to watch the paths. Holds back ash threats for a while. (strength fades over time)",
+    "conditions": {
+      "phase": "outlands"
+    },
+    "unlocks_at": {
+      "phase": "outlands"
+    },
+    "unlock_log": "The paths are open. Defend what you have claimed.",
+    "cooldown": 12.0,
+    "cost": {
+      "shards": 8
+    },
+    "effects": {
+      "log": "You set watchers on the paths. The lost who walk know eyes are on the ash with them.",
+      "log_category": "story",
+      "align_delta": 0.015,
+      "set_last_defend": true,
+      "add_defense": 5.0
+    }
+  }
+}
