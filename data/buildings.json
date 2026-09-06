@@ -39,5 +39,144 @@
     "moral_weight": -0.05,
     "unlock_log": "A vein claimed. The ash now has watchers. The Watch Spire stands ready.",
     "desc": "Eyes on the veins. It watches the ash as much as the ash watches it."
+  },
+
+  "labor_hall": {
+    "name": "Labor Hall",
+    "cost": {"shards": 80, "resonance": 15},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "labor",
+      "queue_time": 45,
+      "boost_defense": 2,
+      "boost_expedition": 0.15
+    },
+    "moral_weight": -0.02,
+    "unlock_log": "The circle needs hands that stay. The Hall will gather them.",
+    "desc": "A place to train and house the lost as steady labor. Their work strengthens the veins and the watch."
+  },
+
+  "spire_works": {
+    "name": "Spire Works",
+    "cost": {"shards": 70, "resonance": 20},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "spire",
+      "queue_time": 60,
+      "build_speed": 0.25
+    },
+    "moral_weight": 0.01,
+    "unlock_log": "The Watch needs more eyes. The Works will raise them faster.",
+    "desc": "Foundry and shaping for additional Watch Spires and basic defenses. Speeds construction along the claimed veins."
+  },
+
+  "dread_foundry": {
+    "name": "Dread Foundry",
+    "cost": {"shards": 90, "resonance": 25},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "aggressive_defense",
+      "queue_time": 50,
+      "defense": 3,
+      "raid_retaliation": 0.1
+    },
+    "require": {"align_lt": -0.25},
+    "moral_weight": -0.08,
+    "unlock_log": "The ash hardens under a firm will. The Foundry forges tools that bite back.",
+    "desc": "Tyrant-leaning production for spiked watchers and aggressive defenses. High output, but the veins remember the cost."
+  },
+
+  "sanctuary_ward": {
+    "name": "Sanctuary Ward",
+    "cost": {"shards": 85, "resonance": 18},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "protective",
+      "queue_time": 55,
+      "defense": 2,
+      "loss_reduction": 0.2
+    },
+    "require": {"align_gt": 0.2},
+    "moral_weight": 0.06,
+    "unlock_log": "The circle can shelter as well as claim. The Ward remembers those who answer willingly.",
+    "desc": "Benevolent-leaning warding structures. Reduces losses on the veins and offers steadier returns for those who walk them."
+  },
+  "vein_forge": {
+    "name": "Vein Forge",
+    "cost": {"shards": 75, "resonance": 12},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "labor",
+      "queue_time": 40,
+      "labor_output": 3.5,
+      "boost_defense": 1.5
+    },
+    "moral_weight": -0.01,
+    "unlock_log": "The veins themselves can be worked. The Forge shapes what the ash yields.",
+    "desc": "A simple forge along claimed lines. Produces steady labor for defense and the walks (neutral production option)."
+  },
+  "spire_foundry": {
+    "name": "Spire Foundry",
+    "cost": {"shards": 95, "resonance": 22},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "spire",
+      "queue_time": 55,
+      "build_speed": 0.35,
+      "defense": 1
+    },
+    "require": {"align_lt": -0.1},
+    "moral_weight": -0.04,
+    "unlock_log": "More spires, faster. The will to watch shapes the ash harder.",
+    "desc": "Aggressive spire production. Faster build speed for all queues, with a bite of defense (tyrant-leaning spire option)."
+  },
+  "resonance_spire": {
+    "name": "Resonance Spire",
+    "cost": {"shards": 88, "resonance": 20},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "resonance",
+      "queue_time": 52,
+      "boost_resonance": 0.18,
+      "expedition_return": 0.12,
+      "defense": 1,
+      "rates": {"resonance": 0.06}
+    },
+    "require": {"align_gt": 0.15},
+    "moral_weight": 0.05,
+    "unlock_log": "The circle can listen as well as command. The Spire will call voices back.",
+    "desc": "A spire tuned to the pulse. Those who walk the veins return with more than they left, and the ash feels less empty."
+  },
+  "will_press": {
+    "name": "Will Press",
+    "cost": {"shards": 82, "resonance": 14},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "extract",
+      "queue_time": 38,
+      "labor_output": 2.0,
+      "shards_on_complete": 18,
+      "raid_retaliation": 0.08,
+      "rates": {"shards": 0.05}
+    },
+    "require": {"align_lt": -0.15},
+    "moral_weight": -0.07,
+    "unlock_log": "Press the ash harder. The veins yield when will is firm.",
+    "desc": "A press that draws more from the claimed ground and those who work it. High gain, the cost paid in silence."
+  },
+  "vein_ward": {
+    "name": "Vein Ward",
+    "cost": {"shards": 78, "resonance": 16},
+    "unlocks_at": {"phase": "outlands"},
+    "effects": {
+      "queue_type": "ward",
+      "queue_time": 48,
+      "defense": 2,
+      "loss_reduction": 0.15,
+      "rates": {"vitalis": 0.04}
+    },
+    "moral_weight": 0.02,
+    "unlock_log": "The veins can be held gently as well as gripped.",
+    "desc": "Wards along the lines that remember those who walk them. Steady defense without the bite."
   }
 }

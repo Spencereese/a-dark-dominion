@@ -1,0 +1,82 @@
+[gd_scene load_steps=4 format=3 uid="uid://outlandsmap001"]
+
+[ext_resource type="Script" path="res://scripts/OutlandsMap.gd" id="1_outmap"]
+[ext_resource type="Texture2D" path="res://assets/art/ember_pulse.jpg" id="2_ember"]
+[ext_resource type="Texture2D" path="res://assets/art/paths_veins.jpg" id="3_veins"]
+[ext_resource type="Texture2D" path="res://assets/art/bound_figure.jpg" id="4_bound"]
+[ext_resource type="Texture2D" path="res://assets/art/weight_accent.jpg" id="5_weight"]
+
+[node name="OutlandsMap" type="Node2D"]
+script = ExtResource("1_outmap")
+
+[node name="AshBG" type="Sprite2D" parent="."]
+modulate = Color(0.28, 0.25, 0.22, 0.22)
+position = Vector2(0, 15)
+scale = Vector2(1.8, 1.8)
+texture = ExtResource("3_veins")
+z_index = -10
+
+[node name="Hearth" type="Sprite2D" parent="."]
+texture = ExtResource("2_ember")
+position = Vector2(0, 0)
+scale = Vector2(0.55, 0.55)
+modulate = Color(1, 0.82, 0.6, 0.85)
+
+[node name="Vein_vein_of_fading_echoes" type="Line2D" parent="."]
+points = PackedVector2Array(104, 60, 186, 108)
+width = 3.0
+default_color = Color(0.4, 0.36, 0.32, 0.65)
+antialiased = true
+
+[node name="Vein_shattered_crossing" type="Line2D" parent="."]
+points = PackedVector2Array(-60, 104, -108, 186)
+width = 3.0
+default_color = Color(0.4, 0.36, 0.32, 0.65)
+antialiased = true
+
+[node name="Vein_hollow_of_silent_bound" type="Line2D" parent="."]
+points = PackedVector2Array(-104, -60, -186, -108)
+width = 3.0
+default_color = Color(0.4, 0.36, 0.32, 0.65)
+antialiased = true
+
+[node name="Vein_vein_of_broken_circles" type="Line2D" parent="."]
+points = PackedVector2Array(60, -104, 108, -186)
+width = 3.0
+default_color = Color(0.4, 0.36, 0.32, 0.65)
+antialiased = true
+
+[node name="Highlight" type="Line2D" parent="."]
+width = 5.5
+default_color = Color(0.95, 0.9, 0.65, 0.38)
+antialiased = true
+z_index = 5
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(0, 10)
+zoom = Vector2(1.6, 1.6)
+process_callback = 0
+limit_left = -450
+limit_top = -350
+limit_right = 450
+limit_bottom = 350
+drag_horizontal_enabled = true
+drag_vertical_enabled = true
+editor_draw_limits = true
+editor_draw_drag_margin = true
+
+# Enhanced for RTS/TD polish: preview labor icon using bound_figure art (editor visible schematic), weight_accent accent for binding effect preview.
+# These are illustrative; runtime code in OutlandsMap.gd dynamically spawns/animates real ones + faction towers + raid lines + production dots.
+[node name="PreviewLabor" type="Sprite2D" parent="."]
+position = Vector2(140, 90)
+scale = Vector2(0.16, 0.16)
+texture = ExtResource("4_bound")
+modulate = Color(0.6, 0.55, 0.45, 0.7)
+z_index = 4
+
+[node name="PreviewAccent" type="Sprite2D" parent="."]
+position = Vector2(-130, -80)
+scale = Vector2(0.2, 0.2)
+texture = ExtResource("5_weight")
+modulate = Color(0.75, 0.7, 0.55, 0.35)
+z_index = 3

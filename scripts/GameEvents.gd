@@ -20,3 +20,9 @@ signal choice_offered(event_key: String)  # polish: proper early choice events s
 signal choice_resolved(event_key: String, choice_id: String)
 signal raid_occurred(mitigated: bool, pop_loss: int)  # for defense system: UI reactions, sounds, stronger narrative hooks on path threats
 signal sfx_cue(cue: String, params: Dictionary)  # sparse triggers from GS/Narrative for audio: revelation, first_bound, expedition_*, reframe_sting etc. Decouples from Main impl.
+
+# Simple events system: Ash Whispers (creative adaptation of random/login "Dragon's Whispers" to theme: ash echoes, vein murmurs, ember calls.
+# Temporary boosts (double drops/rates), special "echo manifestations" (abstract special mob/encounter with rare vitalis "gear" flavor).
+# Tracked in active_whispers; tied to areas (paths/veins) or ascends (phase/alignment thresholds).
+signal whisper_triggered(whisper_id: String, text: String)
+signal whisper_expired(whisper_id: String, resolved_text: String)

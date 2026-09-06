@@ -53,7 +53,9 @@
 - First major choice point: How to handle an "ash-storm" or "echo incursion" — spend to shelter everyone, or seal the havens and let the outer ones be claimed (boost to you, loss of trust or "voices").
 - Exploration teaser: "The ash thins in one direction. There are shapes that were once places." (Pathfinding cost).
 
-**Phase 3: The Outlands / First Expansions (RTS/TD lite introduction) — IMPLEMENTED (MVP paths/expeditions per approved plan) + continued drive (defense strength + raid visuals + scattered embers + audio) + Phase 3/4 expansion (4th path location for more expedition choice + reframe opportunities)**
+**Phase 3: The Outlands / First Expansions (RTS/TD lite introduction) — IMPLEMENTED (MVP paths/expeditions per historical approved plan) + continued drive (defense strength + raid visuals + scattered embers + audio) + Phase 3/4 expansion (4th path location for more expedition choice + reframe opportunities)**
+
+**Note (user-directed acceleration)**: The foundation list-based MVP + early defense is complete. Per the user's request ("more of an rts/tower defense", "moral choices you make unknowingly set your faction", "maintain the mystery while making the story make more sense to the layman") and the approved design plan in the current session, we are accelerating the evolution of this layer into a dedicated 2D schematic visual map (moving expeditions/raids on lanes, visual defense contributions, moral/alignment visual consequences), production queues (C&C flavor), data-filtered faction branching (alignment + early_choice filter available options without explicit labels), and a Memory system (tied to early_choice for layman context). This is the current active milestone. All rules (data-first, generic, reframe + Memory entry on every addition, differentiation, consult STORY, mental playtests, docs updates) remain in force. See the approved plan.md for full details, user clarifications, and breakdown. The historical MVP description below is preserved for reference.
 - "Paths in the Ash" / "Veins in the Ash" map unlocks as simple dynamic list (4 static locations in data/paths.json, expandable data-only; no grid/2D/TD yet). Panel "unfurls" in MainArea UI on phase advance. One new location added following SKILL Implementation Order + "When adding..." (data/paths.json entry with cost/travel/moral_options + strong revelation reframing "lines you marked"/"choice in the havens"/"first ember"; discovery auto via path_data on outlands + load ensure; GS generic dispatch + dynamic seed so no per-id wire; UI already generic).
 - Send expeditions/dispatch the lost (spend shards + "the lost"/pop or free foragers; moral choice buttons per location: e.g. Listen vs Harvest, Respectful vs Strip, Parley vs Overwhelm).
 - Resolution (timed via eta in advance_time + resolve on ticks/load): auto or choice-driven with modifiers (alignment "Weight", foraging_lines count, forager pop); gains shards/resonance/vitalis + pop return/loss.
@@ -66,13 +68,16 @@
 - Scope: MVP simple list + dispatch + resolve + raid tease + first outpost unlock. Prepares for Phase 4 multi-outposts/queues/larger map/full TD. One surprising reframe per addition. (See approved implementation plan for exact line refs, code sketches, data examples, subagent briefs, and testing criteria.)
 - Continued drive (post cooldown visualizer): defense now uses decaying defense_strength (built by Defend action + watch_spire, shown in resources when active, mitigates + reduces raid pop/shard losses with partials); raid triggers ash/ember visual flashes (tween) + signal + claim-tied reframes; "Paths watched" live label; scattered small ember sprites (up to 6) appear/scale/position around central as pulse + pop/havens rise (visual "light grows we see more", reinforces plural embers story); audio skeleton (buses, generators, cues on key actions/events, alignment mix, ash fill).
 
-**Phase 4: The Realm / Regional Power**
+**Phase 4 / Later (after current accelerated visual TD + faction + Memory layer feels magical with strong reframe)**
+- The work described in the "Note (user-directed acceleration)" above (visual schematic map with moving elements, production queues, data-filtered faction branching, Memory system) is the current focus and directly prepares the foundation for the original Phase 4 vision (multi-outposts, deeper TD, full production, larger map, branching content, internal politics, endings).
 - Multiple outposts/bases you manage (supply lines simulated: resources must "travel" or risk loss).
 - Full production queues (C&C style): Choose what "militia", "builders", "enforcers" to train. They take time and pop/food.
 - Tech tree via key buildings (Smithy → better weapons; Granary → pop growth stability; "Hall of Records" or "Propaganda Spire" for alignment flavor).
 - Larger map with hexes or nodes. "Conquer" or "Integrate" small settlements. Each has a short event chain with choice.
 - Defense: Wave/raid defense on a chosen front (lite TD: lanes or abstract "front strength" vs enemy strength, towers contribute fixed power).
 - Internal politics: Happiness/unrest meter. Low unrest on tyrant path requires constant "examples" (costly). Benevolent path has natural growth but external threats exploit "weakness".
+
+(The accelerated visual + faction + Memory layer is being delivered now as the evolution of the Phase 3/4 foundation, per user request and approved plan. Historical Phase 3 MVP details below are preserved for reference.)
 
 **Phase 5: The World & Dominion**
 - Global layer: "The Known Lands" map or strategic view. Other "powers" or last free peoples.
@@ -93,6 +98,7 @@
 - **Buildings**: Data-driven. Cost (resources + time or pop commitment). Effects (rates, capacity, unlocks, defense value). Moral weight on construction and operation. Names: Haven, Resonance Spire, Will-Binder, Watch Spire, etc.
 - **Alignment / Legacy**: Float -1 (the Will / Dominion) to +1 (the Harmony). Changed by actions, policies, event choices. Affects multipliers, available actions/buildings, text everywhere, ending.
 - **Events & Narrative**: Priority queue or trigger-based. Some one-time revelations. Some recurring with variation by alignment. The realization builds: "we are saving them" → "they are part of the Hearth now" → "there is no 'they' left".
+- Added simple Ash Whispers events (random + login/load-based "lingering" + on phase ascends; temp boosts like 2x shards 10min game-time or resonance; special echo_manifest as area-tied "mob" yielding rare vitalis on resolve). Tracked in GameState.active_whispers (persisted). UI: transient notification banner/popup in Main + pulsing icons on affected veins in OutlandsMap (area-tied). All fits ash/vein/echo language + Memory/reframe hooks. (Per delegate task; adapted "Dragon's Whispers" name/theme to differentiation rules.)
 - **Map & Expeditions**: Locations have state (unexplored ash, claimed, integrated, broken). Resolution uses bound/units + alignment/tech modifiers.
 - **Defense / TD Elements**: Global "ash-storm" or "echo incursion" threat. Spires/outposts contribute. Failure = loss of the lost, shards, alignment shift (or tyrant "strength").
 - **Tech / Progression Gates**: Mostly building-driven (C&C style). Some long research actions (idle friendly). Later full production queues for "Hands", "Resonators", "Watchers".

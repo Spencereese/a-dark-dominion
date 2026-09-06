@@ -13,6 +13,8 @@ extends Control
 @onready var speed_buttons: HBoxContainer = %SpeedButtons
 @onready var alignment_section: HBoxContainer = %AlignmentSection
 @onready var actions_panel: PanelContainer = %ActionsPanel
+@onready var log_panel: PanelContainer = null
+@onready var main_area_node: HBoxContainer = null
 
 var action_buttons: Dictionary = {}  # action_id -> Button
 
@@ -25,6 +27,17 @@ var outlands_content: VBoxContainer = null
 var choice_prompt_panel: PanelContainer = null
 var choice_prompt_content: VBoxContainer = null
 var _choice_time_was_paused_by_prompt: bool = false
+
+# Accelerated visual RTS/TD map + Memory (per approved plan)
+var map_panel: PanelContainer = null
+var map_view: Node = null  # instance of scenes/OutlandsMap.tscn (Node2D)
+var memory_panel: PanelContainer = null
+var memory_content: VBoxContainer = null
+
+# Simple events UI: notification popup/banner for Ash Whispers (or map icon). Transient, high-contrast, fits austere style.
+var whisper_banner: PanelContainer = null
+var whisper_banner_label: RichTextLabel = null
+var _whisper_banner_timer: float = 0.0
 
 # Placeholder art visuals (AI-generated minimalist austere dark + warm ember accents; placed via code like outlands/choice panels for rapid iteration)
 var ember_visual: TextureRect = null
@@ -59,6 +72,8 @@ func _ready() -> void:
 	GameEvents.choice_resolved.connect(_on_choice_resolved)
 	GameEvents.raid_occurred.connect(_on_raid_occurred)
 	GameEvents.sfx_cue.connect(_on_sfx_cue)
+	GameEvents.whisper_triggered.connect(_on_whisper_triggered)
+	GameEvents.whisper_expired.connect(_on_whisper_expired)
 
 	_setup_initial_ui()
 	_refresh_resources_display()
@@ -78,6 +93,12 @@ func _ready() -> void:
 	if GameState.phase == "outlands":
 		_ensure_outlands_panel()
 		_refresh_outlands()
+	# Accelerated: ensure visual map (schematic 2D) and Memory panel
+	_ensure_map_panel()
+	_ensure_memory_panel()
+	if GameState.phase == "outlands":
+		_refresh_map()
+	_refresh_memories()
 	call_deferred("_refresh_actions")
 	call_deferred("_refresh_choice_prompt")
 
@@ -115,6 +136,12 @@ func _setup_initial_ui() -> void:
 	alignment_bar.max_value = 1.0
 	alignment_bar.value = GameState.alignment
 	alignment_bar.show_percentage = false
+
+	# Resolve unique panels defensively (some % lookups can be timing sensitive in _ready; use known paths)
+	if log_panel == null:
+		log_panel = get_node_or_null("Margin/VBox/MainArea/LogPanel") as PanelContainer
+	if main_area_node == null:
+		main_area_node = get_node_or_null("Margin/VBox/MainArea") as HBoxContainer
 
 	# Speed controls
 	for child in speed_buttons.get_children():
@@ -544,6 +571,10 @@ func _on_phase_advanced(new_phase: String) -> void:
 	if new_phase == "outlands":
 		_ensure_outlands_panel()
 		_refresh_outlands()
+		_ensure_map_panel()
+		_refresh_map()
+		_ensure_memory_panel()
+		_refresh_memories()
 		_play_outlands_unfurl()  # wider ash + new subtle drone per SOUND_DIRECTION phase advance
 
 func _log_phase_flavor(p: String) -> void:
@@ -798,8 +829,12 @@ func _on_time_for_ui(_seconds: float) -> void:
 	# Thin per spec: only refresh outlands UI if in that phase (etas, resolved expeditions update live)
 	if GameState.phase == "outlands":
 		_refresh_outlands()
+		_refresh_map()  # live movement of expeditions/raids on schematic veins + visual state (moral/align "binding")
 	_refresh_choice_prompt()  # so prompt can appear/disappear live when threshold crossed during ticks
 	_update_ember_visual(_seconds)  # keep the placeholder ember visual breathing with the sim pulse state
+	_refresh_memories()  # progressive Memory context surfaces as time/events advance (tied to early_choice)
+	_update_whisper_banner(_seconds)  # transient notification popup for Ash Whispers events
+	_refresh_map()  # ensure map icons for active area whispers update live
 
 	# Ash ambient: more reliable continuous fill (smart: only when buffer has room, small caps to avoid lag/CPU; occasional larger body)
 	# No _process; driven by time_advanced ticks.
@@ -831,15 +866,18 @@ func _on_action_performed(action_id: String, success: bool) -> void:
 	# _on_dispatch handlers: on defend or any dispatch_*, refresh outlands+resources+actions+status (covers action-list and panel calls)
 	if not success:
 		return
-	if action_id == "defend_paths" or action_id.begins_with("dispatch_"):
+	if action_id == "defend_paths" or action_id.begins_with("dispatch_") or action_id.begins_with("queue_") or action_id.begins_with("assign_labor"):
 		if GameState.phase == "outlands":
 			_refresh_outlands()
+			_refresh_map()  # update visual state, moving elements, defense towers on specific veins + labor indicators
 		_refresh_resources_display()
 		_refresh_actions()
 		_update_status()
+		_refresh_memories()  # production/claim/defend/labor-assign actions surface new Memory context (and assign may not add mem but refresh ok)
 	if action_id.begins_with("choice_"):
 		_refresh_choice_prompt()
 		_refresh_actions()
+		_refresh_memories()  # early choice resolution adds the core memory entry
 		_refresh_resources_display()
 		_update_status()
 	_update_ember_visual()  # immediate visual response for nurture/feed actions that change ember_pulse
@@ -869,6 +907,7 @@ func _on_raid_occurred(mitigated: bool, pop_loss: int) -> void:
 	_refresh_actions()
 	_update_status()
 	_update_ember_visual()
+	_refresh_map()  # raid visual reaction on the schematic (threat movement, vein flash, defense hold)
 	_play_raid_cue(mitigated)
 
 func _on_speed_pressed(btn: Button) -> void:
@@ -893,6 +932,14 @@ func _on_speed_pressed(btn: Button) -> void:
 			choice_prompt_panel.queue_free()
 			choice_prompt_panel = null
 			choice_prompt_content = null
+		if map_panel and is_instance_valid(map_panel):
+			map_panel.queue_free()
+			map_panel = null
+			map_view = null
+		if memory_panel and is_instance_valid(memory_panel):
+			memory_panel.queue_free()
+			memory_panel = null
+			memory_content = null
 		_refresh_resources_display()
 		_refresh_actions()
 		_refresh_choice_prompt()
@@ -905,7 +952,7 @@ func _ensure_outlands_panel() -> void:
 	if outlands_panel != null and is_instance_valid(outlands_panel):
 		outlands_panel.show()
 		return
-	var main_area: HBoxContainer = %MainArea
+	var main_area: HBoxContainer = main_area_node if main_area_node else get_node_or_null("Margin/VBox/MainArea") as HBoxContainer
 	outlands_panel = PanelContainer.new()
 	outlands_panel.custom_minimum_size = Vector2(240, 0)
 	outlands_panel.size_flags_horizontal = 0  # shrink to min, don't steal log flex
@@ -930,12 +977,12 @@ func _ensure_outlands_panel() -> void:
 	marg.add_theme_constant_override("margin_bottom", 6)
 	outlands_panel.add_child(marg)
 	var vbox: VBoxContainer = VBoxContainer.new()
-	vbox.theme_override_constants.separation = 4
+	vbox.add_theme_constant_override("separation", 4)
 	marg.add_child(vbox)
 	# Title per spec: "Paths in the Ash" (alt "Veins in the Ash" ok; chosen for "paths"/"veins" language)
 	var title: Label = Label.new()
 	title.text = "Paths in the Ash"
-	title.theme_override_font_sizes.font_size = 13
+	title.add_theme_font_size_override("font_size", 13)
 	title.add_theme_color_override("font_color", Color(0.9, 0.85, 0.75, 1))
 	vbox.add_child(title)
 	# Header graphic decoration (paths_veins art placeholder integrated into unfurl panel per plan/UI brief; faint to preserve austere dark high-contrast)
@@ -949,7 +996,7 @@ func _ensure_outlands_panel() -> void:
 		vbox.add_child(header_icon)
 	# Content container for dynamic loc entries (cleared on each refresh)
 	outlands_content = VBoxContainer.new()
-	outlands_content.theme_override_constants.separation = 6
+	outlands_content.add_theme_constant_override("separation", 6)
 	vbox.add_child(outlands_content)
 	main_area.add_child(outlands_panel)
 
@@ -985,7 +1032,7 @@ func _refresh_outlands() -> void:
 				break
 		# Entry vbox (compact)
 		var entry: VBoxContainer = VBoxContainer.new()
-		entry.theme_override_constants.separation = 1
+		entry.add_theme_constant_override("separation", 1)
 		# Small paths_veins art icon per entry (integrates placeholder into dynamic list entries per UI brief/plan wireframe; keeps austere by low modulate)
 		if paths_veins_tex:
 			var eicon: TextureRect = TextureRect.new()
@@ -998,21 +1045,21 @@ func _refresh_outlands() -> void:
 		# Name
 		var nlab: Label = Label.new()
 		nlab.text = pname
-		nlab.theme_override_font_sizes.font_size = 11
+		nlab.add_theme_font_size_override("font_size", 11)
 		nlab.add_theme_color_override("font_color", Color(0.88, 0.84, 0.78))
 		entry.add_child(nlab)
 		# Desc (small, allows some wrap for compact info)
 		if pdesc != "":
 			var dlab: Label = Label.new()
 			dlab.text = pdesc
-			dlab.theme_override_font_sizes.font_size = 9
+			dlab.add_theme_font_size_override("font_size", 9)
 			dlab.add_theme_color_override("font_color", Color(0.6, 0.58, 0.55))
 			dlab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			dlab.custom_minimum_size = Vector2(220, 0)
 			entry.add_child(dlab)
 		# Status (eta via ticks, claimed uses reframe language) + live eta polish: show chosen moral intent label + flavored text
 		var slab: Label = Label.new()
-		slab.theme_override_font_sizes.font_size = 9
+		slab.add_theme_font_size_override("font_size", 9)
 		# Live eta polish: lookup active choice label for display (makes intent visible alongside countdown; accurate from stored exp data)
 		var active_intent: String = ""
 		if is_active:
@@ -1046,7 +1093,7 @@ func _refresh_outlands() -> void:
 		# Moral choice buttons if ready to dispatch (from path_data.moral_options); styled after _add_action_button
 		if not is_claimed and not is_active:
 			var hbox: HBoxContainer = HBoxContainer.new()
-			hbox.theme_override_constants.separation = 3
+			hbox.add_theme_constant_override("separation", 3)
 			var opts: Array = pdef.get("moral_options", [])
 			for opt in opts:
 				var oid: String = str(opt.get("id", ""))
@@ -1074,7 +1121,261 @@ func _on_dispatch_choice(path_id: String, choice: String) -> void:
 		_refresh_resources_display()
 		_refresh_actions()
 		_update_status()
+		_refresh_map()  # live update moving elements / state on dispatch
 	# On fail GS already emitted warning log
+
+# === Accelerated Visual Map Panel + Memory (RTS/TD + faction + layman story per approved plan) ===
+# Mirrors the exact _ensure/_refresh unfurl + dynamic code-driven pattern used for outlands and choice.
+# MapPanel contains/instances the dedicated 2D OutlandsMap scene (schematic veins + moving exp/raid + towers with moral/align state).
+# Memory panel surfaces GameState.memory_entries (tied to early_choice) for context while preserving mystery.
+
+func _ensure_map_panel() -> void:
+	if map_panel != null:
+		return
+	# Create panel (dark austere style, min width for map + controls, inserted as sibling in MainArea HBox like outlands)
+	map_panel = PanelContainer.new()
+	map_panel.name = "MapPanel"
+	map_panel.custom_minimum_size = Vector2(280, 0)
+	# Use the @onready log_panel (unique name resolved at ready) to clone its style.
+	var style: StyleBoxFlat = null
+	if log_panel:
+		style = log_panel.get_theme_stylebox("panel") as StyleBoxFlat
+	if style == null:
+		# Fallback (should not normally hit)
+		style = StyleBoxFlat.new()
+		style.bg_color = Color(0.03, 0.025, 0.035, 1)
+		style.border_width_left = 1
+		style.border_width_top = 1
+		style.border_width_right = 1
+		style.border_width_bottom = 1
+		style.border_color = Color(0.18, 0.15, 0.14, 1)
+		style.corner_radius_top_left = 4
+		style.corner_radius_top_right = 4
+		style.corner_radius_bottom_right = 4
+		style.corner_radius_bottom_left = 4
+	if style:
+		map_panel.add_theme_stylebox_override("panel", style.duplicate())
+	# Header + content
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var title: Label = Label.new()
+	title.text = "The Veins (The Ash Remembers)"
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color(0.75, 0.7, 0.6, 1))
+	vbox.add_child(title)
+	# Instance the 2D map scene (lightweight Node2D with schematic + movement)
+	# Embed via SubViewport + SubViewportContainer so the Node2D (with its Camera2D, Line2D, sprites) actually renders inside the UI panel.
+	# Direct add of Node2D under Control/VBox does not produce visible canvas items.
+	var map_scene: PackedScene = load("res://scenes/OutlandsMap.tscn")
+	if map_scene:
+		map_view = map_scene.instantiate()
+		var svc := SubViewportContainer.new()
+		svc.name = "MapViewportContainer"
+		svc.custom_minimum_size = Vector2(260, 220)
+		svc.stretch = true
+		svc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		svc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var sv := SubViewport.new()
+		sv.name = "MapViewport"
+		sv.size = Vector2i(520, 440)  # 2x for crisp schematic
+		sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		sv.handle_input_locally = true
+		sv.add_child(map_view)
+		svc.add_child(sv)
+		vbox.add_child(svc)
+		if map_view.has_method("update_from_gamestate"):
+			map_view.update_from_gamestate(true)  # initial sync
+	# Optional compact status / dispatch buttons area (hybrid with existing list style)
+	var status_hb: HBoxContainer = HBoxContainer.new()
+	var status_lbl: Label = Label.new()
+	status_lbl.name = "MapStatus"
+	status_lbl.text = "Veins claimed: 0"
+	status_lbl.add_theme_font_size_override("font_size", 10)
+	status_hb.add_child(status_lbl)
+	vbox.add_child(status_hb)
+	map_panel.add_child(vbox)
+	# Insert into MainArea (grows UI surface on outlands, like the historical unfurl)
+	if main_area_node:
+		main_area_node.add_child(map_panel)
+	map_panel.visible = (GameState != null and GameState.phase == "outlands")
+	# Wire basic signals for the map instance if it exposes them
+	if map_view and map_view.has_signal("vein_focused"):
+		map_view.vein_focused.connect(_on_map_vein_focused)
+	if map_view and map_view.has_signal("dispatch_requested"):
+		map_view.dispatch_requested.connect(_on_map_dispatch_requested)
+	if map_view and map_view.has_signal("moral_choice_offered"):
+		map_view.moral_choice_offered.connect(_on_map_moral_choice_offered)
+
+func _refresh_map() -> void:
+	if map_panel == null or not is_instance_valid(map_panel):
+		return
+	if GameState.phase != "outlands":
+		map_panel.visible = false
+		return
+	map_panel.visible = true
+	if map_view and map_view.has_method("update_from_gamestate"):
+		map_view.update_from_gamestate()
+	# Compact status (number claimed, defense hint) - search by name since dynamic vbox
+	var status: Label = null
+	for child in map_panel.get_children():
+		if child is VBoxContainer:
+			for c2 in child.get_children():
+				if c2 is HBoxContainer:
+					status = c2.get_node_or_null("MapStatus") as Label
+					break
+			if status: break
+	if status and GameState:
+		var claimed: int = 0
+		if typeof(GameState.path_claims) == TYPE_DICTIONARY:
+			claimed = GameState.path_claims.keys().filter(func(k): return GameState.path_claims[k]).size()
+		var qtxt: String = ""
+		if GameState.has_method("get_active_queues_text"):
+			qtxt = "  |  " + GameState.get_active_queues_text()
+		elif GameState.production_queue.size() > 0:
+			qtxt = "  | Queues: %d" % GameState.production_queue.size()
+		var pl = 0.0
+		if "production_labor" in GameState: pl = GameState.production_labor
+		var lb = 0.0
+		if "labor_boost" in GameState: lb = GameState.labor_boost
+		if pl > 0.1 or lb > 0.1:
+			qtxt += "  | Labor active"
+		status.text = "Veins claimed: %d  |  Paths watched: %.1f%s" % [claimed, GameState.defense_strength, qtxt]
+	# Live refresh of moving elements is handled inside the map_view _process / update
+
+func _on_map_vein_focused(path_id: String) -> void:
+	# Stub for future: highlight in list or auto-dispatch UI
+	if GameState and GameState.has_method("get_path_visual_data"):
+		var v: Dictionary = GameState.get_path_visual_data(path_id)
+		# Could open moral buttons for this vein or just log
+		GameEvents.log_message.emit("Vein focused: " + path_id + " (visual angle " + str(v.get("angle_deg", "?")) + ")", "system")
+
+func _on_map_dispatch_requested(path_id: String, choice: String) -> void:
+	# Map requested dispatch (from click/interaction in 2D view); Main can enhance with choice UI later.
+	# For now, the map script already tried GameState.dispatch if possible; log for visibility.
+	GameEvents.log_message.emit("Map dispatch requested for " + path_id + " (choice: " + choice + ")", "system")
+	# Refresh to show any new exp on map
+	_refresh_map()
+
+func _on_map_moral_choice_offered(path_id: String, options: Array) -> void:
+	# Map click offered moral choices — do NOT auto-pick. Show clickable buttons in the map panel.
+	GameEvents.log_message.emit("The ash waits on the " + path_id.replace("_", " ") + ". Choose how they walk it.", "story")
+	_show_map_path_choices(path_id, options)
+	_refresh_outlands()
+	_refresh_actions()
+
+func _show_map_path_choices(path_id: String, options: Array) -> void:
+	# Temporary moral buttons under the map status row (player agency for Listen vs Harvest etc.)
+	if map_panel == null or not is_instance_valid(map_panel):
+		return
+	var host: VBoxContainer = null
+	for child in map_panel.get_children():
+		if child is VBoxContainer:
+			host = child
+			break
+	if host == null:
+		return
+	# Remove prior map choice bar if any
+	var old: Node = host.get_node_or_null("MapMoralChoices")
+	if old:
+		old.queue_free()
+	var box: VBoxContainer = VBoxContainer.new()
+	box.name = "MapMoralChoices"
+	var title: Label = Label.new()
+	var pname: String = path_id
+	if GameState and GameState.path_data.has(path_id):
+		pname = str(GameState.path_data[path_id].get("name", path_id))
+	title.text = "Dispatch: " + pname
+	title.add_theme_font_size_override("font_size", 10)
+	title.add_theme_color_override("font_color", Color(0.85, 0.75, 0.45, 1))
+	box.add_child(title)
+	for opt in options:
+		var b: Button = Button.new()
+		b.text = str(opt.get("label", opt.get("id", "Choose")))
+		b.tooltip_text = "align " + str(opt.get("alignment", 0))
+		b.add_theme_font_size_override("font_size", 10)
+		var cid: String = str(opt.get("id", ""))
+		b.pressed.connect(_on_map_path_choice_pressed.bind(path_id, cid))
+		box.add_child(b)
+	host.add_child(box)
+
+func _on_map_path_choice_pressed(path_id: String, choice_id: String) -> void:
+	if GameState and GameState.has_method("dispatch_expedition"):
+		GameState.dispatch_expedition(path_id, choice_id)
+	# Clear the temporary bar
+	if map_panel and is_instance_valid(map_panel):
+		for child in map_panel.get_children():
+			if child is VBoxContainer:
+				var old: Node = child.get_node_or_null("MapMoralChoices")
+				if old:
+					old.queue_free()
+				break
+	_refresh_map()
+	_refresh_outlands()
+	_refresh_actions()
+	_refresh_memories()
+
+func _ensure_memory_panel() -> void:
+	if memory_panel != null:
+		return
+	memory_panel = PanelContainer.new()
+	memory_panel.name = "MemoryPanel"
+	memory_panel.custom_minimum_size = Vector2(0, 120)
+	# Use the @onready log_panel (unique name resolved at ready) to clone its style.
+	var style: StyleBoxFlat = null
+	if log_panel:
+		style = log_panel.get_theme_stylebox("panel") as StyleBoxFlat
+	if style == null:
+		# Fallback (should not normally hit)
+		style = StyleBoxFlat.new()
+		style.bg_color = Color(0.03, 0.025, 0.035, 1)
+		style.border_width_left = 1
+		style.border_width_top = 1
+		style.border_width_right = 1
+		style.border_width_bottom = 1
+		style.border_color = Color(0.18, 0.15, 0.14, 1)
+		style.corner_radius_top_left = 4
+		style.corner_radius_top_right = 4
+		style.corner_radius_bottom_right = 4
+		style.corner_radius_bottom_left = 4
+	if style:
+		memory_panel.add_theme_stylebox_override("panel", style.duplicate())
+	var vbox: VBoxContainer = VBoxContainer.new()
+	var title: Label = Label.new()
+	title.text = "Memory / Reflections (The Ash Remembers What You Chose)"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color(0.7, 0.65, 0.55, 1))
+	vbox.add_child(title)
+	memory_content = VBoxContainer.new()
+	memory_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(memory_content)
+	memory_panel.add_child(vbox)
+	if main_area_node:
+		main_area_node.add_child(memory_panel)
+	memory_panel.visible = (GameState != null and GameState.phase == "outlands")
+
+func _refresh_memories() -> void:
+	if memory_panel and is_instance_valid(memory_panel):
+		var show_mem: bool = false
+		if GameState:
+			show_mem = (GameState.phase == "outlands") or (GameState.memory_entries.size() > 0) or (GameState.early_choice != "")
+		memory_panel.visible = show_mem
+	if memory_content == null or not is_instance_valid(memory_content):
+		return
+	# Clear and repopulate from GameState (curated, progressive, tied to early_choice per plan)
+	for c in memory_content.get_children():
+		c.queue_free()
+	if not GameState or not ("memory_entries" in GameState):
+		return
+	for entry in GameState.memory_entries:
+		var lbl: RichTextLabel = RichTextLabel.new()
+		lbl.bbcode_enabled = true
+		lbl.fit_content = true
+		lbl.scroll_active = false
+		var txt: String = str(entry.get("text", ""))
+		# Subtle gold for key memory/reframe moments
+		lbl.text = "[color=#c8a070]" + txt + "[/color]"
+		lbl.add_theme_font_size_override("normal_font_size", 11)
+		memory_content.add_child(lbl)
 
 # === Proper Early Choice Prompt UI (polish for gut-punch landing) ===
 # Distinct visual weight: gold-tinted header, full prompt, prominent option buttons.
@@ -1106,7 +1407,7 @@ func _show_choice_prompt(event_key: String) -> void:
 	# Header
 	var header: Label = Label.new()
 	header.text = "A Choice in the Havens"
-	header.theme_override_font_sizes.font_size = 14
+	header.add_theme_font_size_override("font_size", 14)
 	header.add_theme_color_override("font_color", Color(0.85, 0.7, 0.3))  # ominous gold
 	choice_prompt_content.add_child(header)
 
@@ -1120,7 +1421,7 @@ func _show_choice_prompt(event_key: String) -> void:
 	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	prompt.custom_minimum_size = Vector2(260, 0)
 	prompt.add_theme_color_override("font_color", Color(0.9, 0.85, 0.75))
-	prompt.theme_override_font_sizes.font_size = 11
+	prompt.add_theme_font_size_override("font_size", 11)
 	choice_prompt_content.add_child(prompt)
 
 	# Options (3 for echo_incursion; use Narrative flavored labels + descs as tooltips)
@@ -1142,7 +1443,7 @@ func _show_choice_prompt(event_key: String) -> void:
 				opts.append({"id": cid, "label": o.get("label", ""), "tip": o.get("desc", "")})
 
 	var hbox: HBoxContainer = HBoxContainer.new()
-	hbox.theme_override_constants.separation = 4
+	hbox.add_theme_constant_override("separation", 4)
 	for opt in opts:
 		var b: Button = Button.new()
 		b.text = opt.get("label", "Choose")
@@ -1157,7 +1458,7 @@ func _show_choice_prompt(event_key: String) -> void:
 	# Subtle instruction
 	var note: Label = Label.new()
 	note.text = "This decision will be remembered by the ash."
-	note.theme_override_font_sizes.font_size = 9
+	note.add_theme_font_size_override("font_size", 9)
 	note.add_theme_color_override("font_color", Color(0.6, 0.55, 0.5))
 	choice_prompt_content.add_child(note)
 
@@ -1190,7 +1491,7 @@ func _hide_choice_prompt() -> void:
 func _ensure_choice_prompt() -> void:
 	if choice_prompt_panel != null and is_instance_valid(choice_prompt_panel):
 		return
-	var main_area: HBoxContainer = %MainArea
+	var main_area: HBoxContainer = main_area_node if main_area_node else get_node_or_null("Margin/VBox/MainArea") as HBoxContainer
 	choice_prompt_panel = PanelContainer.new()
 	choice_prompt_panel.custom_minimum_size = Vector2(280, 0)
 	choice_prompt_panel.size_flags_horizontal = 0
@@ -1214,7 +1515,7 @@ func _ensure_choice_prompt() -> void:
 	marg.add_theme_constant_override("margin_bottom", 4)
 	choice_prompt_panel.add_child(marg)
 	choice_prompt_content = VBoxContainer.new()
-	choice_prompt_content.theme_override_constants.separation = 4
+	choice_prompt_content.add_theme_constant_override("separation", 4)
 	marg.add_child(choice_prompt_content)
 	# Insert before actions or at start of main area for visibility (choice is early-game critical)
 	main_area.add_child(choice_prompt_panel)
@@ -1317,4 +1618,95 @@ func _play_outlands_unfurl() -> void:
 	outlands_drone.play()
 	# Subtle low drone sine (not noise) for new layer
 	_generate_tone_burst(outlands_drone, 37.0, 1.35, 0.20, false, false)
+
+
+# === Ash Whispers UI (notification popup/banner + map icon support) ===
+# Simple transient banner (popup style, gold-tinted like choice/revelation for weight). Auto fades or manual close.
+# Icon on map handled in OutlandsMap via active_whispers areas. Ties notification to state.
+
+func _on_whisper_triggered(whisper_id: String, text: String) -> void:
+	_show_whisper_banner(text)
+	# Also ensure map gets fresh icons/state
+	_refresh_map()
+
+func _on_whisper_expired(whisper_id: String, resolved_text: String) -> void:
+	if resolved_text != "":
+		# Brief secondary notice on resolve (or just log which already happened in GS)
+		_show_whisper_banner(resolved_text, 4.5)  # shorter for resolve
+	_refresh_map()
+
+func _ensure_whisper_banner() -> void:
+	if whisper_banner != null and is_instance_valid(whisper_banner):
+		return
+	whisper_banner = PanelContainer.new()
+	whisper_banner.name = "WhisperBanner"
+	whisper_banner.custom_minimum_size = Vector2(300, 0)
+	whisper_banner.size_flags_horizontal = 0
+	var dark: StyleBoxFlat = StyleBoxFlat.new()
+	dark.bg_color = Color(0.04, 0.03, 0.02, 0.95)
+	dark.border_width_left = 1
+	dark.border_width_top = 1
+	dark.border_width_right = 1
+	dark.border_width_bottom = 1
+	dark.border_color = Color(0.6, 0.52, 0.35, 0.7)  # warm ember-ish border for whisper
+	dark.corner_radius_top_left = 3
+	dark.corner_radius_top_right = 3
+	dark.corner_radius_bottom_right = 3
+	dark.corner_radius_bottom_left = 3
+	whisper_banner.add_theme_stylebox_override("panel", dark)
+
+	var marg: MarginContainer = MarginContainer.new()
+	marg.add_theme_constant_override("margin_left", 8)
+	marg.add_theme_constant_override("margin_top", 4)
+	marg.add_theme_constant_override("margin_right", 8)
+	marg.add_theme_constant_override("margin_bottom", 4)
+	whisper_banner.add_child(marg)
+
+	var vb: VBoxContainer = VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	marg.add_child(vb)
+
+	whisper_banner_label = RichTextLabel.new()
+	whisper_banner_label.bbcode_enabled = true
+	whisper_banner_label.fit_content = true
+	whisper_banner_label.scroll_active = false
+	whisper_banner_label.add_theme_font_size_override("normal_font_size", 11)
+	whisper_banner_label.add_theme_color_override("default_color", Color(0.92, 0.85, 0.7))
+	vb.add_child(whisper_banner_label)
+
+	# Close button for popup control (right aligned simple)
+	var close: Button = Button.new()
+	close.text = "×"
+	close.custom_minimum_size = Vector2(22, 18)
+	close.add_theme_font_size_override("font_size", 11)
+	close.pressed.connect(_hide_whisper_banner)
+	vb.add_child(close)
+
+	# Insert near top of main area or actions for visibility (like choice)
+	var main_area: HBoxContainer = main_area_node if main_area_node else get_node_or_null("Margin/VBox/MainArea") as HBoxContainer
+	if main_area:
+		main_area.add_child(whisper_banner)
+		main_area.move_child(whisper_banner, 0)
+	whisper_banner.hide()
+
+func _show_whisper_banner(text: String, duration: float = 12.0) -> void:
+	_ensure_whisper_banner()
+	if whisper_banner_label:
+		whisper_banner_label.text = "[color=#c8a070]Ash Whispers:[/color] " + text
+	if whisper_banner:
+		whisper_banner.show()
+	_whisper_banner_timer = duration
+
+func _hide_whisper_banner() -> void:
+	if whisper_banner and is_instance_valid(whisper_banner):
+		whisper_banner.hide()
+	_whisper_banner_timer = 0.0
+
+func _update_whisper_banner(delta: float) -> void:
+	if _whisper_banner_timer > 0.0:
+		_whisper_banner_timer -= delta
+		if _whisper_banner_timer <= 0.0 and whisper_banner and is_instance_valid(whisper_banner) and whisper_banner.visible:
+			# Auto fade simple (instant hide for prototype; could tween alpha)
+			_hide_whisper_banner()
+	# (No auto re-show to avoid spam; player sees via map icon + log + initial banner popup. State query available via get_active_whispers for future.)
 

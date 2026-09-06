@@ -28,3 +28,5 @@ data/temp/
 
 # Keep data/ content but ignore large exports if we add them later
 # data/exports/
+final_out.txt
+final_err.txt

@@ -1,8 +1,11 @@
 #!/bin/zsh
-# Convenience launcher for A Dark Dominion
+# Convenience launcher for A Dark Dominion (Mac version)
 # - Always cleans .godot cache (prevents stale parse / missing dep errors after edits)
-# - Uses the known location of your Godot 4.6.3 on this machine
+# - Uses the known location of your Godot 4.6+ on this machine
 # - Run from the project root: ./launch_godot.sh
+#
+# NOTE: This is the original Mac/zsh script. On Windows (PowerShell), use launch_godot.ps1 instead.
+# See README.md for Windows instructions and the cross-platform manual steps.
 
 set -e
 
@@ -28,11 +31,12 @@ if [[ ! -x "$GODOT_BIN" ]]; then
   echo "If you installed Godot elsewhere, edit this script or launch manually:"
   echo "  1. rm -rf .godot"
   echo "  2. Open the project folder in your Godot.app"
+  echo "On Windows, use launch_godot.ps1 (see README)."
   exit 1
 fi
 
 echo "Launching: $GODOT_BIN --path ."
-echo "(Clean start. Use the in-game 'Reset (New Game)' button anytime to restart. Look to the right sidebar under 'Actions' for buttons like 'Nurture the Ember'. Watch the log on the left for the story.)"
+echo "(Clean start. Use the in-game 'Reset (New Game)' button anytime to restart. Look to the right sidebar under 'Actions' for buttons like 'Nurture the Ember'. Watch the log on the left for the story. On Windows use launch_godot.ps1 instead.)"
 echo ""
 
 exec "$GODOT_BIN" --path . "$@"

@@ -308,6 +308,7 @@ When adding new content: update this file, the relevant JSON (with revelation + 
 - Delayed reframe on outlands entry + every first path claim + post-demand.
 - Pop / haven / action text mutations across alignment + flags.
 - Visual (scattered embers) + audio (cues + mix) support for the emotional weight. Recent audio expansion adds dedicated sparse generator cues/stings for key story beats: revelation bell swell (on gold logs + reframes), first-bound resonance on initial path claim, expedition dispatch/resolve tones (by moral/align delta), eta ticks during travel, outlands unfurl drone, and reframe_sting on delayed "You have been doing this since the first circle" moments (via sfx_cue signal from GS/Narrative).
+- Production/C&C expansion (resonance_spire, will_press, vein_ward + queue actions): faction-require gated (align), new queue_types with map visual differentiation (resonance warm dots, extract dark thorns), labor/expedition/defense/raid tradeoffs. Every complete + labor assign adds early_choice-tied Memory entry + reframe hook naming the first haven choice as origin of the new "hands" and "presses".
 
 Future work (per DESIGN + SKILL impl order): more buildings/jobs with alignment branching, reactive raid choice events, production queues that feel like conscription vs willing, larger map events, full 4-6 endings with unique text and conditions, New Game+ legacies.
 
@@ -321,3 +322,46 @@ Future work (per DESIGN + SKILL impl order): more buildings/jobs with alignment 
 - The power is in the *gradual* reveal. Ruthlessly cut anything that gives the twist away too early or too explicitly.
 
 This document should be updated whenever new branches, revelations, or major mechanics with narrative weight are added. The game only feels magical when every button press matters more than the player yet knows.
+
+---
+
+## Memory System (tied to early_choice + accelerated visual TD / faction / production phase)
+
+The Memory / Reflections layer (new UI panel in the accelerated redesign) surfaces curated, progressive context drawn from this bible. It is explicitly tied to the persisted `early_choice` and `choice_history` so that the player's specific moral decisions at the havens (and later on paths/production) echo in the "understanding" the player gains over time.
+
+**Purpose**: Makes the world logic and the cost of "progress" legible to a layman through play (visual map consequences + Memory text) while the main log stays the cold, patient voice of the ash and the big "You have been binding them from the first circle" gut-punch still lands via delayed reframes. Mystery is preserved — Memory does not name "faction" or "dominion" outright; it shows the pattern repeating in the player's own words and the land's response.
+
+**Population triggers** (examples; GameState/Narrative add these on the events, flavored by current alignment/early_choice/claims):
+- On early choice resolve (echo_incursion): Record the chosen memory + immediate reframe log (already in apply_choice).
+- On first path claim (any moral): Add memory echoing the specific early_choice + the claim revelation.
+- On production complete (Labor Hall / Dread Foundry etc.): "The hands you trained at the [Hall/Foundry] answer the same silence you first asked of them at the havens..."
+- On raid outcome (mitigated or loss on a claimed vein): "The ash on [Vein name] answers with the voice you taught it when you chose [early choice]..."
+- On major alignment shift or outlands entry: Tie back to "the weight of the first ember" and the choice that named it.
+
+**Example Memory entries** (use these or close variants; flavor further in NarrativeSystem.get_flavored_text using early_choice context):
+
+**Shelter path memories**:
+- "You opened the havens. You told yourself it was mercy. The pulse called, and they answered. Now the veins you mark answer in the same way — the lost who walk them carry the silence you first offered."
+- "When the echoes first came, you chose to shelter them within the circle. Every later claim, every hand sent along the lines, every new spire raised — all of it grew from that first opening."
+
+**Demand path memories**:
+- "You chose to demand they work for the shelter of the pulse. Their eyes went quiet before they ever saw the ash. Now the Foundry forges tools that remember the same demand."
+- "Demanding more at the first haven taught the ash that will could be imposed. The Labor Hall answers with the same rhythm you first set. The hands move even when they are not asked."
+
+**Seal path memories**:
+- "You sealed the havens. Their cries faded, and the ember steadied. The circle learned to close. Now the Ward you raise on the veins holds what you once turned away."
+- "When the echoes first came, you chose to seal them out. The paths you later claimed learned the same lesson — some answers are not allowed inside."
+
+**General / production / raid**:
+- "The [Labor Hall / Dread Foundry / Sanctuary Ward] you raised now stands where the first haven once stood in your mind. The work it does is the work you first asked of the ones who stayed."
+- "A raid on the [Vein of Broken Circles] took [X] who walked the lines you marked. They answered with the same silence you taught the circle when you chose [your early choice]."
+- "You have been shaping the ash into watchers and wards and forges since the first time you asked more of the lost. The map only shows what the choice at the havens already decided."
+- "The Resonance Spire you raised now stands where the first haven gathered those who answered the pulse. The voices that return now sing the silence you first offered (shelter path)."
+- "The Will Press forges what the demand at the first haven first asked. The ash yields because you taught it to (demand path)."
+- "The Vein Ward holds the lines the way you first held the havens open. Those who walk them feel the circle differently now (shelter or ward path)."
+
+These entries (and the visual map changes that accompany them — a harsh claim darkens the vein with thorn/Bound icons; a production choice adds a "hardened" or "warded" overlay) are what make the story make more sense to a layman: the player sees and reads the direct consequence of their moral decisions in the world they are building, while the deeper implication ("this is dominion, and you have been the one building it all along") remains the earned reframe.
+
+When adding new production buildings, map visuals, or faction options, always add at least one corresponding Memory entry (or variant) here and ensure it is surfaced on the relevant event. The entry must name or strongly echo the player's early_choice and prior "helpful" actions as the origin.
+
+Update this section whenever new mechanics with narrative weight are added in the visual TD / faction / production layer.

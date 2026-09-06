@@ -87,6 +87,7 @@ func get_current_context() -> Dictionary:
 		"havens": GameState.buildings.get("haven", 0),
 		"population": GameState.population,
 		"foragers": GameState.assigned.get("forager", 0),
+		"production_labor": float(GameState.production_labor) if "production_labor" in GameState else 0.0,
 		"time": GameState.total_play_time,
 		"demand_more": GameState.flags.get("demand_more_policy", false),
 		"incursion_handled": GameState.flags.get("incursion_handled", false),

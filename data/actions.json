@@ -137,5 +137,219 @@
       "set_last_defend": true,
       "add_defense": 5.0
     }
+  },
+
+  "queue_labor_hall": {
+    "name": "Queue Hands at the Labor Hall",
+    "tooltip": "Commit labor and time to train steady hands. They will strengthen the watch and the walks.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "labor_hall"
+    },
+    "unlocks_at": {
+      "unlocked_building": "labor_hall"
+    },
+    "cost": {
+      "shards": 25,
+      "resonance": 5
+    },
+    "effects": {
+      "start_production": "labor_hall",
+      "log": "You set the Hall to work. More hands will answer the pulse.",
+      "log_category": "story"
+    }
+  },
+
+  "queue_spire_works": {
+    "name": "Queue Construction at the Spire Works",
+    "tooltip": "Speed the raising of more eyes along the veins.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "spire_works"
+    },
+    "unlocks_at": {
+      "unlocked_building": "spire_works"
+    },
+    "cost": {
+      "shards": 30,
+      "resonance": 8
+    },
+    "effects": {
+      "start_production": "spire_works",
+      "log": "The Works begin shaping new spires. The ash will have more watchers.",
+      "log_category": "story"
+    }
+  },
+
+  "queue_dread_foundry": {
+    "name": "Queue at the Dread Foundry",
+    "tooltip": "Forge tools that bite. High cost in will, high return in control.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "dread_foundry"
+    },
+    "unlocks_at": {
+      "unlocked_building": "dread_foundry"
+    },
+    "cost": {
+      "shards": 35,
+      "resonance": 12
+    },
+    "effects": {
+      "start_production": "dread_foundry",
+      "log": "The Foundry answers a harder will. The spikes will remember who shaped them.",
+      "log_category": "revelation"
+    }
+  },
+
+  "queue_sanctuary_ward": {
+    "name": "Queue at the Sanctuary Ward",
+    "tooltip": "Raise protections that remember those who answered willingly.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "sanctuary_ward"
+    },
+    "unlocks_at": {
+      "unlocked_building": "sanctuary_ward"
+    },
+    "cost": {
+      "shards": 32,
+      "resonance": 10
+    },
+    "effects": {
+      "start_production": "sanctuary_ward",
+      "log": "The Ward rises. Those who walk the veins will feel the circle holding them differently.",
+      "log_category": "story"
+    }
+  },
+  "assign_labor_defense": {
+    "name": "Assign Labor to Defense",
+    "tooltip": "Commit production labor to bolstering watchers on the veins (C&C: direct your halls' output).",
+    "conditions": {
+      "phase": "outlands",
+      "production_labor_gte": 1.0
+    },
+    "cost": {},
+    "effects": {
+      "assign_labor": "defense",
+      "delta": 1.0,
+      "log": "Labor turns to the watch. The veins stand a little firmer.",
+      "log_category": "story"
+    }
+  },
+  "assign_labor_expedition": {
+    "name": "Assign Labor to the Walks",
+    "tooltip": "Direct trained hands to aid expeditions along the veins.",
+    "conditions": {
+      "phase": "outlands",
+      "production_labor_gte": 1.0
+    },
+    "cost": {},
+    "effects": {
+      "assign_labor": "expedition",
+      "delta": 1.0,
+      "log": "The labor walks with them. The ash yields a little more readily.",
+      "log_category": "story"
+    }
+  },
+  "queue_vein_forge": {
+    "name": "Queue at the Vein Forge",
+    "tooltip": "Work the claimed veins for more steady labor.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "vein_forge"
+    },
+    "unlocks_at": {
+      "unlocked_building": "vein_forge"
+    },
+    "cost": {
+      "shards": 22,
+      "resonance": 6
+    },
+    "effects": {
+      "start_production": "vein_forge",
+      "log": "The Forge takes the vein's yield and returns hands and watchers.",
+      "log_category": "story"
+    }
+  },
+  "queue_spire_foundry": {
+    "name": "Queue at the Spire Foundry",
+    "tooltip": "Push for faster spires and watchers under a harder will.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "spire_foundry"
+    },
+    "unlocks_at": {
+      "unlocked_building": "spire_foundry"
+    },
+    "cost": {
+      "shards": 28,
+      "resonance": 9
+    },
+    "effects": {
+      "start_production": "spire_foundry",
+      "log": "The Foundry answers. All construction quickens under the press of will.",
+      "log_category": "revelation"
+    }
+  },
+  "queue_resonance_spire": {
+    "name": "Queue at the Resonance Spire",
+    "tooltip": "Call more voices along the veins. They return changed, carrying resonance.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "resonance_spire"
+    },
+    "unlocks_at": {
+      "unlocked_building": "resonance_spire"
+    },
+    "cost": {
+      "shards": 30,
+      "resonance": 10
+    },
+    "effects": {
+      "start_production": "resonance_spire",
+      "log": "The Spire sings. More will answer the circle's call.",
+      "log_category": "story"
+    }
+  },
+  "queue_will_press": {
+    "name": "Queue at the Will Press",
+    "tooltip": "Force the veins for gain. The press remembers the shape of your first demand.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "will_press"
+    },
+    "unlocks_at": {
+      "unlocked_building": "will_press"
+    },
+    "cost": {
+      "shards": 28,
+      "resonance": 7
+    },
+    "effects": {
+      "start_production": "will_press",
+      "log": "The Press works. The ash gives more when you do not ask.",
+      "log_category": "revelation"
+    }
+  },
+  "queue_vein_ward": {
+    "name": "Queue at the Vein Ward",
+    "tooltip": "Raise gentle wards that hold what walks the lines.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "vein_ward"
+    },
+    "unlocks_at": {
+      "unlocked_building": "vein_ward"
+    },
+    "cost": {
+      "shards": 26,
+      "resonance": 8
+    },
+    "effects": {
+      "start_production": "vein_ward",
+      "log": "The Ward stands. The veins feel a little less hungry.",
+      "log_category": "story"
+    }
   }
 }
