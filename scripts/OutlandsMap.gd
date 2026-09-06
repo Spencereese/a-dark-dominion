@@ -876,6 +876,17 @@ func _input(event: InputEvent) -> void:
 				dispatch_on_vein(pid, "")
 			break
 
+func compute_choice_hit_rect(pos: Vector2, text: String, font_size: int = 9, pad: Vector2 = Vector2(10, 6)) -> Rect2:
+	# R5: font-measured hitbox (replaces approximate fixed Label rects). Public for headless asserts.
+	var font: Font = ThemeDB.fallback_font
+	var sz: Vector2 = Vector2(float(max(48, text.length() * 6)), float(font_size + 4))
+	if font:
+		sz = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	# Minimum comfortable click target (accessibility); pad beyond glyph bounds
+	sz.x = max(sz.x, 72.0) + pad.x * 2.0
+	sz.y = max(sz.y, float(font_size + 2)) + pad.y * 2.0
+	return Rect2(pos - Vector2(pad.x, pad.y), sz)
+
 func _offer_moral_dispatch(path_id: String, click_pos: Vector2) -> void:
 	_hide_choice_ui()
 	_choice_for_path = path_id
@@ -884,31 +895,45 @@ func _offer_moral_dispatch(path_id: String, click_pos: Vector2) -> void:
 		options = GameState.path_data[path_id].get("moral_options", [])
 	# Emit so Main can show matching sidebar / map-panel buttons
 	moral_choice_offered.emit(path_id, options)
-	# Clickable hint labels near vein end — player must click a label to commit a moral choice
+	# R5: clickable Button hints with font-measured hitrects (no more fixed 180x16 approx)
 	var se: Array = _get_vein_start_end(path_id)
 	var base_pos: Vector2 = se[1] * 0.92 + Vector2(12, -8)
 	_choice_option_hits.clear()
+	var row_gap: float = 22.0
 	for i in range(min(2, options.size())):
 		var opt: Dictionary = options[i]
-		var lbl := Label.new()
-		lbl.name = "ChoiceHint_" + str(i)
 		var label_txt: String = str(opt.get("label", opt.get("id", "?")))
-		lbl.text = "> " + label_txt
-		lbl.add_theme_font_size_override("font_size", 9)
-		lbl.add_theme_color_override("font_color", Color(0.92, 0.86, 0.55, 0.98))
-		lbl.position = base_pos + Vector2(0, i * 16)
-		lbl.z_index = 10
-		add_child(lbl)
-		_choice_ui_nodes.append(lbl)
-		# Approximate hit rect (labels size after add; use generous fixed box for reliability)
-		var hit_rect: Rect2 = Rect2(lbl.position - Vector2(4, 2), Vector2(180, 16))
-		_choice_option_hits.append({"rect": hit_rect, "id": str(opt.get("id", "")), "path": path_id})
+		var display: String = "> " + label_txt
+		var btn := Button.new()
+		btn.name = "ChoiceHint_" + str(i)
+		btn.text = display
+		btn.flat = true
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.add_theme_font_size_override("font_size", 9)
+		btn.add_theme_color_override("font_color", Color(0.92, 0.86, 0.55, 0.98))
+		btn.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.7, 1.0))
+		btn.position = base_pos + Vector2(0, float(i) * row_gap)
+		btn.z_index = 10
+		var hit_rect: Rect2 = compute_choice_hit_rect(btn.position, display, 9)
+		btn.size = hit_rect.size
+		btn.custom_minimum_size = hit_rect.size
+		var cid: String = str(opt.get("id", ""))
+		var pid_cap: String = path_id
+		btn.pressed.connect(func():
+			_hide_choice_ui()
+			if cid != "" and pid_cap != "":
+				dispatch_on_vein(pid_cap, cid)
+				dispatch_requested.emit(pid_cap, cid)
+		)
+		add_child(btn)
+		_choice_ui_nodes.append(btn)
+		_choice_option_hits.append({"rect": hit_rect, "id": cid, "path": path_id})
 	var hint := Label.new()
 	hint.name = "ChoiceHint_Prompt"
 	hint.text = "Choose (click a path)"
 	hint.add_theme_font_size_override("font_size", 8)
 	hint.add_theme_color_override("font_color", Color(0.7, 0.65, 0.5, 0.9))
-	hint.position = base_pos + Vector2(0, -12)
+	hint.position = base_pos + Vector2(0, -14)
 	hint.z_index = 10
 	add_child(hint)
 	_choice_ui_nodes.append(hint)

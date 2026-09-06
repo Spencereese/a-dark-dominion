@@ -36,6 +36,11 @@ func _run_tests() -> void:
 	else:
 		_fail("NarrativeSystem autoload missing")
 
+	# --- R5: Clear residual NG+ meta so prior runs do not contaminate ---
+	if gs.has_method("_save_ng_plus_meta"):
+		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": []})
+		_ok("cleared ng_plus_meta for clean headless")
+
 	# --- Data ---
 	print("Loading data files...")
 	var paths_data: Dictionary = _load_json("res://data/paths.json")
@@ -559,6 +564,118 @@ func _run_tests() -> void:
 		_fail("harvest_dominion trigger failed")
 
 	print("ending_id=", gs.ending_id, " outcome=", gs.ending_outcome)
+
+	# --- R5 Map hitboxes (font-measured) ---
+	print("Checking map choice hitboxes...")
+	var map_script = load("res://scripts/OutlandsMap.gd")
+	if map_script == null:
+		_fail("OutlandsMap.gd load failed")
+	else:
+		var map_inst: Node = map_script.new()
+		if map_inst == null or not map_inst.has_method("compute_choice_hit_rect"):
+			_fail("compute_choice_hit_rect missing on OutlandsMap")
+		else:
+			_ok("compute_choice_hit_rect present")
+			var short_r: Rect2 = map_inst.compute_choice_hit_rect(Vector2(10, 20), "> Listen", 9)
+			var long_r: Rect2 = map_inst.compute_choice_hit_rect(Vector2(10, 20), "> Harvest the Bound Echoes", 9)
+			if short_r.size.x >= 72.0 and short_r.size.y >= 12.0:
+				_ok("short choice hitbox sized (%.1fx%.1f)" % [short_r.size.x, short_r.size.y])
+			else:
+				_fail("short choice hitbox too small: " + str(short_r.size))
+			if long_r.size.x > short_r.size.x + 8.0:
+				_ok("long choice hitbox wider than short (%.1f > %.1f)" % [long_r.size.x, short_r.size.x])
+			else:
+				_fail("long hitbox should exceed short; long=" + str(long_r.size.x) + " short=" + str(short_r.size.x))
+			# Fixed 180x16 approx must NOT be the only size anymore — measured varies by text
+			if abs(long_r.size.x - 180.0) > 0.5 or abs(long_r.size.y - 16.0) > 0.5:
+				_ok("hitbox is measured (not fixed 180x16 approx)")
+			else:
+				_fail("hitbox still looks like fixed 180x16 approx")
+		if map_inst:
+			map_inst.free()
+
+	# --- R5 NG+ Memory shard carry ---
+	print("Simulating NG+ Memory shard seal -> reset -> carry...")
+	if not gs.has_method("_seal_memory_shard") or not gs.has_method("_apply_memory_shard_carry"):
+		_fail("NG+ Memory shard methods missing")
+	else:
+		_ok("NG+ Memory shard methods present")
+	# Clean meta then seal via ending
+	if gs.has_method("_save_ng_plus_meta"):
+		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": []})
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.ending_outcome = ""
+	gs.early_choice = "shelter"
+	gs.memory_entries.clear()
+	gs.memory_shard_active = false
+	if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+		gs._load_endings_data()
+	gs.trigger_ending("nurture_circle", "headless ng+")
+	if gs.game_ended and gs.ending_id == "nurture_circle":
+		_ok("sealed ending nurture_circle for NG+")
+	else:
+		_fail("NG+ seal ending failed")
+	var meta_after_seal: Dictionary = {}
+	if gs.has_method("_load_ng_plus_meta"):
+		meta_after_seal = gs._load_ng_plus_meta()
+	if bool(meta_after_seal.get("pending", false)) and str(meta_after_seal.get("shard", {}).get("ending_id", "")) == "nurture_circle":
+		_ok("ng_plus_meta pending shard sealed")
+	else:
+		_fail("ng_plus_meta pending missing after seal: " + str(meta_after_seal.keys()))
+
+	# Reset must apply carry on fresh init
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	if gs.memory_shard_active:
+		_ok("memory_shard_active after NG+ reset")
+	else:
+		_fail("memory_shard_active false after carry")
+	var shard_bonus: float = float(gs.MEMORY_SHARD_START_SHARDS) if "MEMORY_SHARD_START_SHARDS" in gs else 3.0
+	if float(gs.resources.get("shards", 0.0)) >= shard_bonus - 0.01:
+		_ok("starting shards include Memory shard bonus (" + str(gs.resources.get("shards", 0.0)) + ")")
+	else:
+		_fail("shards missing NG+ bonus: " + str(gs.resources.get("shards", 0.0)))
+	var has_ng_mem: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "ng_plus_memory_shard":
+			has_ng_mem = true
+			break
+	if has_ng_mem:
+		_ok("memory_entries has ng_plus_memory_shard")
+	else:
+		_fail("memory_entries missing ng_plus_memory_shard")
+	if int(gs.ng_plus_run) >= 1:
+		_ok("ng_plus_run bumped to " + str(gs.ng_plus_run))
+	else:
+		_fail("ng_plus_run not bumped")
+	# Pending cleared after apply (one-shot)
+	var meta_after_apply: Dictionary = gs._load_ng_plus_meta() if gs.has_method("_load_ng_plus_meta") else {}
+	if not bool(meta_after_apply.get("pending", true)):
+		_ok("ng_plus pending cleared after apply")
+	else:
+		_fail("ng_plus pending still true after apply")
+	# Second reset without new ending must NOT re-apply bonus pile-up from same shard
+	var shards_before: float = float(gs.resources.get("shards", 0.0))
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	if not gs.memory_shard_active and float(gs.resources.get("shards", 0.0)) < shard_bonus:
+		_ok("second reset without new seal does not re-carry")
+	elif not gs.memory_shard_active:
+		# Fresh start shards may be 0; bonus absent is the assert
+		_ok("second reset without pending carry (shards=" + str(gs.resources.get("shards", 0.0)) + ")")
+	else:
+		_fail("second reset incorrectly re-applied memory shard")
+
+	# Keep faction buildings still present after R5 work
+	var bd: Dictionary = _load_json("res://data/buildings.json")
+	if bd.has("echo_choir") and bd.has("ash_binder"):
+		_ok("faction buildings still in data after R5")
+	else:
+		_fail("faction buildings missing after R5")
+
 	_finish()
 
 func _finish() -> void:

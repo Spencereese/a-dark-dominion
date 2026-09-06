@@ -76,6 +76,12 @@ var ending_outcome: String = ""  # "win" | "lose"
 var path_moral_nurture: int = 0  # listen/mend/positive path options
 var path_moral_harvest: int = 0  # harvest/cut/claim/negative path options
 const ENDING_CLAIM_THRESHOLD := 2  # veins claimed before reckoning can fire
+# R5 NG+ meta: Memory shard carried across runs (persisted separately from save_auto)
+var ng_plus_run: int = 0  # how many completed cycles have been carried
+var memory_shard_active: bool = false  # true this run if a shard was applied at start
+var memory_shard_last: Dictionary = {}  # last sealed/applied shard snapshot (runtime mirror of meta)
+const MEMORY_SHARD_START_SHARDS := 3.0
+const NG_PLUS_META_PATH := "user://ng_plus_meta.json"
 # === Data-Driven Content ===
 var building_data: Dictionary = {}  # loaded from data/buildings.json
 var action_data: Dictionary = {}  # loaded from data/actions.json -- 100% data-driven actions
@@ -1379,6 +1385,7 @@ func _load_or_init() -> void:
 		active_whispers.clear()
 		# path_data populated by _load_paths_data, not reset here
 		_log("You wake with a jolt. Your head throbs. Smoke stings your lungs. The ground is littered with embers â€” small glowing sparks scattered in the ash and debris. One brighter ember pulses near your hand, the strongest. You have no memory of how you got here.", "story")
+		_apply_memory_shard_carry()
 
 	# Ensure newly added paths (from data/paths.json Phase 3/4 expansions) appear for saves that already reached outlands.
 	# Keeps old progress intact while making location additions data-only (no code list updates needed after this).
@@ -1792,6 +1799,19 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 			base = "Labor is set to " + role + ". The pulse claims more of the ash, and of those bound to answer it."
 	elif event_key.begins_with("echo_manifest"):
 		base = "An echo manifests and is resolved. The ash answers the pattern you set at the first circle."
+	elif event_key == "ng_plus_memory_shard":
+		var prev_end: String = str(extra.get("ending_id", "a prior cycle"))
+		var prev_out: String = str(extra.get("outcome", ""))
+		var prev_choice: String = str(extra.get("early_choice", ""))
+		var run_n: int = int(extra.get("ng_plus_run", 1))
+		base = "A Memory shard survived the ash from cycle " + str(run_n) + ". Ending: " + prev_end
+		if prev_out != "":
+			base += " (" + prev_out + ")"
+		if prev_choice != "":
+			base += ". Your first haven choice then was " + prev_choice + "."
+		else:
+			base += ". The pulse remembers a shape you do not."
+		base += " The shard warms a few starting embers."
 
 	if base == "":
 		return  # unknown key: do not spam empty entries
@@ -2005,6 +2025,8 @@ func trigger_ending(id: String, reason: String = "") -> void:
 	GameEvents.ending_reached.emit(ending_id, ending_outcome)
 	GameEvents.sfx_cue.emit("reframe_sting", {"ending": ending_id, "outcome": ending_outcome, "strength": 1.0})
 	GameEvents.available_actions_changed.emit()
+	# R5: seal Memory shard for NG+ carry into the next run
+	_seal_memory_shard()
 	save_game()
 
 func get_ending_info() -> Dictionary:
@@ -2061,6 +2083,9 @@ func save_game(slot: String = "auto") -> void:
 		"ending_outcome": ending_outcome,
 		"path_moral_nurture": path_moral_nurture,
 		"path_moral_harvest": path_moral_harvest,
+		"ng_plus_run": ng_plus_run,
+		"memory_shard_active": memory_shard_active,
+		"memory_shard_last": memory_shard_last,
 		# path_data is always from data/paths.json on load, not persisted
 	}
 	var path: String = "user://save_%s.json" % slot
@@ -2124,6 +2149,11 @@ func load_game(slot: String = "auto") -> bool:
 	ending_outcome = str(data.get("ending_outcome", ""))
 	path_moral_nurture = int(data.get("path_moral_nurture", 0))
 	path_moral_harvest = int(data.get("path_moral_harvest", 0))
+	ng_plus_run = int(data.get("ng_plus_run", ng_plus_run))
+	memory_shard_active = bool(data.get("memory_shard_active", false))
+	var _msl = data.get("memory_shard_last", {})
+	if typeof(_msl) == TYPE_DICTIONARY:
+		memory_shard_last = _msl
 
 	# Accelerated: restore production and Memory
 	production_queue.clear()
@@ -2190,11 +2220,106 @@ func reset_to_new_game() -> void:
 	ending_outcome = ""
 	path_moral_nurture = 0
 	path_moral_harvest = 0
+	memory_shard_active = false
+	memory_shard_last = {}
+	# ng_plus_run / meta file survive; apply runs on fresh _load_or_init
 	# Re-init (will call _load_paths_data + _load_or_init fresh)
 	_ready()
 
 
+# === R5 NG+ Memory shard (carry ending echo into next run) ===
 
+func _load_ng_plus_meta() -> Dictionary:
+	if not FileAccess.file_exists(NG_PLUS_META_PATH):
+		return {}
+	var file: FileAccess = FileAccess.open(NG_PLUS_META_PATH, FileAccess.READ)
+	if not file:
+		return {}
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {}
+	return parsed
 
+func _save_ng_plus_meta(meta: Dictionary) -> void:
+	var file: FileAccess = FileAccess.open(NG_PLUS_META_PATH, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(meta, "\t"))
+		file.close()
 
+func _seal_memory_shard() -> void:
+	# Called from trigger_ending. Writes pending shard outside save_auto so reset/editor wipe keep it.
+	if ending_id == "":
+		return
+	var meta: Dictionary = _load_ng_plus_meta()
+	var runs: int = int(meta.get("ng_plus_run", 0)) + 1
+	var shard: Dictionary = {
+		"ending_id": ending_id,
+		"outcome": ending_outcome,
+		"early_choice": early_choice,
+		"path_moral_nurture": path_moral_nurture,
+		"path_moral_harvest": path_moral_harvest,
+		"alignment": alignment,
+		"ng_plus_run": runs,
+		"sealed_at": total_play_time,
+	}
+	meta["ng_plus_run"] = runs
+	meta["pending"] = true
+	meta["shard"] = shard
+	var hist = meta.get("history", [])
+	if typeof(hist) != TYPE_ARRAY:
+		hist = []
+	hist = hist.duplicate()
+	hist.append(shard.duplicate(true))
+	while hist.size() > 12:
+		hist.remove_at(0)
+	meta["history"] = hist
+	_save_ng_plus_meta(meta)
+	memory_shard_last = shard.duplicate(true)
+	_log("A Memory shard settles in the ash. The next awakening may remember this cycle.", "revelation")
+
+func _apply_memory_shard_carry() -> void:
+	# One-shot: if pending shard exists, seed this fresh run then clear pending.
+	var meta: Dictionary = _load_ng_plus_meta()
+	if not bool(meta.get("pending", false)):
+		memory_shard_active = false
+		ng_plus_run = int(meta.get("ng_plus_run", 0))
+		return
+	var shard: Dictionary = meta.get("shard", {})
+	if typeof(shard) != TYPE_DICTIONARY or shard.is_empty():
+		meta["pending"] = false
+		_save_ng_plus_meta(meta)
+		return
+	ng_plus_run = int(meta.get("ng_plus_run", int(shard.get("ng_plus_run", 1))))
+	memory_shard_active = true
+	memory_shard_last = shard.duplicate(true)
+	resources["shards"] = float(resources.get("shards", 0.0)) + MEMORY_SHARD_START_SHARDS
+	var prior_end: String = str(shard.get("ending_id", ""))
+	var prior_out: String = str(shard.get("outcome", ""))
+	if prior_end == "nurture_circle":
+		alignment = clamp(alignment + 0.05, -1.0, 1.0)
+	elif prior_end == "harvest_dominion":
+		alignment = clamp(alignment - 0.05, -1.0, 1.0)
+	elif prior_end == "collapse_ash":
+		ember_pulse = max(ember_pulse, 0.5)
+	flags["ng_plus"] = true
+	flags["ng_plus_from_ending"] = prior_end
+	add_memory("ng_plus_memory_shard", {
+		"ending_id": prior_end,
+		"outcome": prior_out,
+		"early_choice": str(shard.get("early_choice", "")),
+		"ng_plus_run": ng_plus_run,
+	})
+	meta["pending"] = false
+	meta["last_applied"] = shard.duplicate(true)
+	_save_ng_plus_meta(meta)
+	GameEvents.resource_changed.emit("shards", float(resources.get("shards", 0.0)), MEMORY_SHARD_START_SHARDS)
+	_log("Something warm remains in your palm — a Memory shard from a cycle the ash will not fully forget.", "story")
+
+func get_memory_shard_info() -> Dictionary:
+	return {
+		"active": memory_shard_active,
+		"ng_plus_run": ng_plus_run,
+		"last": memory_shard_last.duplicate(true),
+	}
 
