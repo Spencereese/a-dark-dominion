@@ -38,7 +38,7 @@ func _run_tests() -> void:
 
 	# --- R5: Clear residual NG+ meta so prior runs do not contaminate ---
 	if gs.has_method("_save_ng_plus_meta"):
-		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": []})
+		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": [], "echo_marks": 0, "endings_seen": [], "unlocked_legacies": [], "unlocked_challenges": []})
 		_ok("cleared ng_plus_meta for clean headless")
 
 	# --- Data ---
@@ -645,7 +645,7 @@ func _run_tests() -> void:
 		_ok("NG+ Memory shard methods present")
 	# Clean meta then seal via ending
 	if gs.has_method("_save_ng_plus_meta"):
-		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": []})
+		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": [], "echo_marks": 0, "endings_seen": [], "unlocked_legacies": [], "unlocked_challenges": []})
 	if gs.has_method("reset_to_new_game"):
 		gs.reset_to_new_game()
 	gs.game_ended = false
@@ -711,6 +711,115 @@ func _run_tests() -> void:
 		_ok("second reset without pending carry (shards=" + str(gs.resources.get("shards", 0.0)) + ")")
 	else:
 		_fail("second reset incorrectly re-applied memory shard")
+
+	# --- R11 richer NG+ meta (echo marks, legacies, challenges) ---
+	print("Simulating richer NG+ meta: echo marks + legacy unlock/apply + challenge...")
+	if gs.ng_plus_data.is_empty() and gs.has_method("_load_ng_plus_data"):
+		gs._load_ng_plus_data()
+	if gs.ng_plus_data.has("legacies") and gs.ng_plus_data.has("challenges"):
+		_ok("ng_plus.json loaded legacies+challenges")
+	else:
+		_fail("ng_plus.json missing legacies/challenges keys")
+	# Re-seal nurture to exercise unlock path with clean meta
+	if gs.has_method("_save_ng_plus_meta"):
+		gs._save_ng_plus_meta({"ng_plus_run": 0, "pending": false, "shard": {}, "history": [], "echo_marks": 0, "endings_seen": [], "unlocked_legacies": [], "unlocked_challenges": []})
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.ending_outcome = ""
+	gs.early_choice = "shelter"
+	gs.memory_entries.clear()
+	if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+		gs._load_endings_data()
+	gs.trigger_ending("nurture_circle", "headless r11")
+	var meta_r11: Dictionary = gs._load_ng_plus_meta() if gs.has_method("_load_ng_plus_meta") else {}
+	if int(meta_r11.get("echo_marks", 0)) >= 2:
+		_ok("echo marks gained on nurture seal (" + str(meta_r11.get("echo_marks", 0)) + ")")
+	else:
+		_fail("echo marks missing after seal: " + str(meta_r11))
+	var ul_r11: Array = meta_r11.get("unlocked_legacies", [])
+	if typeof(ul_r11) == TYPE_ARRAY and ("warm_lines" in ul_r11):
+		_ok("legacy warm_lines unlocked from nurture")
+	else:
+		_fail("warm_lines not unlocked: " + str(ul_r11))
+	# Carry applies legacy bonuses beyond base shard
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	if gs.active_legacy == "warm_lines":
+		_ok("active_legacy warm_lines after carry")
+	else:
+		_fail("active_legacy expected warm_lines got " + str(gs.active_legacy))
+	if float(gs.resources.get("resonance", 0.0)) >= 0.99:
+		_ok("legacy apply granted resonance (" + str(gs.resources.get("resonance", 0.0)) + ")")
+	else:
+		_fail("legacy resonance missing: " + str(gs.resources.get("resonance", 0.0)))
+	var has_leg_mem := false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "ng_plus_legacy_apply":
+			has_leg_mem = true
+			break
+	if has_leg_mem:
+		_ok("memory has ng_plus_legacy_apply")
+	else:
+		_fail("missing ng_plus_legacy_apply memory")
+	if gs.has_method("get_ng_plus_summary"):
+		var sum: Dictionary = gs.get_ng_plus_summary()
+		if int(sum.get("echo_marks", 0)) >= 2 and sum.has("wanderer_line"):
+			_ok("get_ng_plus_summary returns echo+wanderer")
+		else:
+			_fail("get_ng_plus_summary incomplete: " + str(sum.keys()))
+	else:
+		_fail("get_ng_plus_summary missing")
+	# Sparse hearth unlocks no_havens challenge + thin_fire activate
+	if gs.has_method("_save_ng_plus_meta"):
+		gs._save_ng_plus_meta({"ng_plus_run": 1, "pending": false, "shard": {}, "history": [], "echo_marks": 2, "endings_seen": ["nurture_circle"], "unlocked_legacies": ["warm_lines"], "unlocked_challenges": []})
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.ending_outcome = ""
+	gs.memory_entries.clear()
+	gs.trigger_ending("sparse_hearth", "headless r11 challenge")
+	var meta_sp: Dictionary = gs._load_ng_plus_meta() if gs.has_method("_load_ng_plus_meta") else {}
+	var uc_sp: Array = meta_sp.get("unlocked_challenges", [])
+	if typeof(uc_sp) == TYPE_ARRAY and ("no_havens" in uc_sp):
+		_ok("challenge no_havens unlocked from sparse_hearth")
+	else:
+		_fail("no_havens not unlocked: " + str(uc_sp))
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	if gs.active_challenge == "no_havens" or gs.active_legacy == "thin_fire":
+		_ok("sparse carry activated thin_fire/no_havens (legacy=" + str(gs.active_legacy) + " challenge=" + str(gs.active_challenge) + ")")
+	else:
+		_fail("sparse carry missing challenge/legacy: L=" + str(gs.active_legacy) + " C=" + str(gs.active_challenge))
+	if gs.ng_plus_prod_delta < -0.01:
+		_ok("challenge prod delta active (" + str(gs.ng_plus_prod_delta) + ")")
+	else:
+		# thin_fire activate_challenge should set -0.08
+		if gs.active_challenge == "no_havens":
+			_fail("no_havens active but prod delta not negative: " + str(gs.ng_plus_prod_delta))
+		else:
+			_ok("challenge not auto-forced this path; legacy alone ok")
+	# Deep ash memory unlock at min_runs/marks
+	if gs.has_method("_save_ng_plus_meta"):
+		gs._save_ng_plus_meta({
+			"ng_plus_run": 3,
+			"pending": false,
+			"shard": {},
+			"history": [],
+			"echo_marks": 6,
+			"endings_seen": ["nurture_circle", "harvest_dominion", "collapse_ash"],
+			"unlocked_legacies": ["warm_lines", "bound_hands", "scattered_embers"],
+			"unlocked_challenges": []
+		})
+	var meta_deep: Dictionary = gs._load_ng_plus_meta()
+	var newly_deep: Dictionary = gs._ng_plus_unlock_from_meta(meta_deep) if gs.has_method("_ng_plus_unlock_from_meta") else {}
+	gs._save_ng_plus_meta(meta_deep)
+	if "deep_ash_memory" in meta_deep.get("unlocked_legacies", []):
+		_ok("deep_ash_memory unlocks at runs+marks threshold")
+	else:
+		_fail("deep_ash_memory not unlocked: " + str(meta_deep.get("unlocked_legacies", [])))
 
 	# Keep faction buildings still present after R5 work
 	var bd: Dictionary = _load_json("res://data/buildings.json")

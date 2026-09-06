@@ -89,10 +89,18 @@ var ending_outcome: String = ""  # "win" | "lose"
 var path_moral_nurture: int = 0  # listen/mend/positive path options
 var path_moral_harvest: int = 0  # harvest/cut/claim/negative path options
 const ENDING_CLAIM_THRESHOLD := 2  # veins claimed before reckoning can fire
-# R5 NG+ meta: Memory shard carried across runs (persisted separately from save_auto)
+# R5/R11 NG+ meta: Memory shard + richer legacies/challenges (persisted separately from save_auto)
 var ng_plus_run: int = 0  # how many completed cycles have been carried
 var memory_shard_active: bool = false  # true this run if a shard was applied at start
 var memory_shard_last: Dictionary = {}  # last sealed/applied shard snapshot (runtime mirror of meta)
+var ng_plus_data: Dictionary = {}  # loaded from data/ng_plus.json
+var echo_marks: int = 0  # runtime mirror of persistent meta echo marks
+var unlocked_legacies: Array = []  # legacy ids unlocked across runs
+var unlocked_challenges: Array = []  # challenge ids unlocked across runs
+var active_legacy: String = ""  # legacy applied at start of this NG+ run
+var active_challenge: String = ""  # optional challenge mode active this run
+var ng_plus_prod_delta: float = 0.0  # challenge / legacy production modifier
+var ng_plus_raid_mod: float = 0.0  # +pressure / -relief for convoy+raid ash risk
 const MEMORY_SHARD_START_SHARDS := 3.0
 const NG_PLUS_META_PATH := "user://ng_plus_meta.json"
 # === Data-Driven Content ===
@@ -110,15 +118,17 @@ var ember_pulse: float = 0.0  # 0-10 or so
 
 # Alignment effects (simple multipliers for prototype)
 func get_prod_mult() -> float:
+	var m: float = 1.0
 	if alignment <= -0.6:
-		return 1.35  # tyrant efficiency
+		m = 1.35  # tyrant efficiency
 	elif alignment <= -0.2:
-		return 1.15
+		m = 1.15
 	elif alignment >= 0.6:
-		return 0.85  # benevolent more "fair", slower raw numbers
+		m = 0.85  # benevolent more "fair", slower raw numbers
 	elif alignment >= 0.2:
-		return 0.95
-	return 1.0
+		m = 0.95
+	m += ng_plus_prod_delta
+	return max(0.5, m)
 
 func get_unrest_risk() -> float:
 	# Higher on extreme tyrant or if demanding more from the lost
@@ -135,6 +145,7 @@ func _ready() -> void:
 	_load_raid_data()
 	_load_tower_data()
 	_load_logistics_data()
+	_load_ng_plus_data()
 	_load_or_init()
 	# Seed some starting flavor if brand new
 	if resources["shards"] <= 0.1 and phase == "dark":
@@ -256,6 +267,27 @@ func _load_logistics_data() -> void:
 	else:
 		logistics_data = {}
 		print("[GameState] WARN: logistics.json invalid")
+
+
+func _load_ng_plus_data() -> void:
+	# R11: richer NG+ legacies / echo marks / challenge modes
+	var path := "res://data/ng_plus.json"
+	if not FileAccess.file_exists(path):
+		ng_plus_data = {}
+		print("[GameState] WARN: ng_plus.json missing")
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if not file:
+		ng_plus_data = {}
+		return
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if typeof(parsed) == TYPE_DICTIONARY:
+		ng_plus_data = parsed
+		print("[GameState] Loaded ng_plus data: ", ng_plus_data.keys())
+	else:
+		ng_plus_data = {}
+		print("[GameState] WARN: ng_plus.json invalid")
 
 
 func _process(delta: float) -> void:
@@ -2162,6 +2194,14 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 		else:
 			base += ". The pulse remembers a shape you do not."
 		base += " The shard warms a few starting embers."
+	elif event_key == "ng_plus_legacy_unlock":
+		base = "A legacy settles into the ash: " + str(extra.get("name", extra.get("legacy_id", "unknown"))) + ". " + str(extra.get("desc", "The next wanderer may inherit it."))
+	elif event_key == "ng_plus_legacy_apply":
+		base = "This cycle opens under legacy " + str(extra.get("name", extra.get("legacy_id", "unknown"))) + ". " + str(extra.get("desc", "Prior weight shapes the first embers."))
+	elif event_key == "ng_plus_challenge_unlock":
+		base = "Challenge remembered: " + str(extra.get("name", extra.get("challenge_id", "unknown"))) + ". " + str(extra.get("desc", "A harder path waits if you claim it."))
+	elif event_key == "ng_plus_challenge_active":
+		base = "Challenge mode active: " + str(extra.get("name", extra.get("challenge_id", "unknown"))) + ". " + str(extra.get("desc", "The ash will not make this cycle easy."))
 	elif event_key == "lane_tower_first_shot":
 		var shot_path: String = str(extra.get("path_id", "a vein"))
 		if path_data.has(shot_path):
@@ -2584,6 +2624,13 @@ func save_game(slot: String = "auto") -> void:
 		"ng_plus_run": ng_plus_run,
 		"memory_shard_active": memory_shard_active,
 		"memory_shard_last": memory_shard_last,
+		"echo_marks": echo_marks,
+		"unlocked_legacies": unlocked_legacies,
+		"unlocked_challenges": unlocked_challenges,
+		"active_legacy": active_legacy,
+		"active_challenge": active_challenge,
+		"ng_plus_prod_delta": ng_plus_prod_delta,
+		"ng_plus_raid_mod": ng_plus_raid_mod,
 		"pending_raid": pending_raid,
 		"lane_combat_hits": lane_combat_hits,
 		"lane_combat_credit": lane_combat_credit,
@@ -2682,6 +2729,15 @@ func load_game(slot: String = "auto") -> bool:
 	var _msl = data.get("memory_shard_last", {})
 	if typeof(_msl) == TYPE_DICTIONARY:
 		memory_shard_last = _msl
+	echo_marks = int(data.get("echo_marks", echo_marks))
+	var _ul = data.get("unlocked_legacies", unlocked_legacies)
+	unlocked_legacies = _ul if typeof(_ul) == TYPE_ARRAY else []
+	var _uc = data.get("unlocked_challenges", unlocked_challenges)
+	unlocked_challenges = _uc if typeof(_uc) == TYPE_ARRAY else []
+	active_legacy = str(data.get("active_legacy", active_legacy))
+	active_challenge = str(data.get("active_challenge", active_challenge))
+	ng_plus_prod_delta = float(data.get("ng_plus_prod_delta", ng_plus_prod_delta))
+	ng_plus_raid_mod = float(data.get("ng_plus_raid_mod", ng_plus_raid_mod))
 
 	# Accelerated: restore production and Memory
 	production_queue.clear()
@@ -2760,7 +2816,11 @@ func reset_to_new_game() -> void:
 	path_moral_harvest = 0
 	memory_shard_active = false
 	memory_shard_last = {}
-	# ng_plus_run / meta file survive; apply runs on fresh _load_or_init
+	active_legacy = ""
+	active_challenge = ""
+	ng_plus_prod_delta = 0.0
+	ng_plus_raid_mod = 0.0
+	# echo_marks / unlocked_* / ng_plus_run / meta file survive; apply runs on fresh _load_or_init
 	# Re-init (will call _load_paths_data + _load_or_init fresh)
 	_ready()
 
@@ -2919,6 +2979,7 @@ func get_convoy_loss_chance(path_id: String = "") -> float:
 		chance += float(logistics_data.get("tyrant_extra_loss", 0.08))
 	elif alignment >= 0.5:
 		chance -= float(logistics_data.get("benevolent_loss_reduction", 0.05))
+	chance += ng_plus_raid_mod
 	return clampf(chance, 0.0, 0.85)
 
 
@@ -2973,7 +3034,7 @@ func _deliver_convoy(convoy: Dictionary) -> void:
 
 # End R10 logistics
 
-# === R5 NG+ Memory shard (carry ending echo into next run) ===
+# === R5/R11 NG+ Memory shard + richer legacies / challenges ===
 
 func _load_ng_plus_meta() -> Dictionary:
 	if not FileAccess.file_exists(NG_PLUS_META_PATH):
@@ -2993,12 +3054,159 @@ func _save_ng_plus_meta(meta: Dictionary) -> void:
 		file.store_string(JSON.stringify(meta, "\t"))
 		file.close()
 
+func _ng_plus_array_ids(raw) -> Array:
+	var out: Array = []
+	if typeof(raw) != TYPE_ARRAY:
+		return out
+	for x in raw:
+		var s: String = str(x)
+		if s != "" and not (s in out):
+			out.append(s)
+	return out
+
+func _ng_plus_require_met(req: Dictionary, meta: Dictionary) -> bool:
+	if req.is_empty():
+		return true
+	var endings_seen: Array = _ng_plus_array_ids(meta.get("endings_seen", []))
+	var runs: int = int(meta.get("ng_plus_run", 0))
+	var marks: int = int(meta.get("echo_marks", 0))
+	if req.has("ending_seen"):
+		var need_e: String = str(req.get("ending_seen", ""))
+		if need_e != "" and not (need_e in endings_seen):
+			return false
+	if req.has("min_runs") and runs < int(req.get("min_runs", 0)):
+		return false
+	if req.has("min_echo_marks") and marks < int(req.get("min_echo_marks", 0)):
+		return false
+	if req.has("endings_seen_count") and endings_seen.size() < int(req.get("endings_seen_count", 0)):
+		return false
+	return true
+
+func _ng_plus_unlock_from_meta(meta: Dictionary) -> Dictionary:
+	# Mutates meta unlocked_* arrays; returns {legacies:[], challenges:[]} newly unlocked ids
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
+	var newly_leg: Array = []
+	var newly_ch: Array = []
+	var ul: Array = _ng_plus_array_ids(meta.get("unlocked_legacies", []))
+	var uc: Array = _ng_plus_array_ids(meta.get("unlocked_challenges", []))
+	var legs: Dictionary = ng_plus_data.get("legacies", {})
+	if typeof(legs) == TYPE_DICTIONARY:
+		for lid in legs.keys():
+			var def: Dictionary = legs[lid]
+			if typeof(def) != TYPE_DICTIONARY:
+				continue
+			var req: Dictionary = def.get("require", {})
+			if typeof(req) != TYPE_DICTIONARY:
+				req = {}
+			if _ng_plus_require_met(req, meta) and not (str(lid) in ul):
+				ul.append(str(lid))
+				newly_leg.append(str(lid))
+	var chs: Dictionary = ng_plus_data.get("challenges", {})
+	if typeof(chs) == TYPE_DICTIONARY:
+		for cid in chs.keys():
+			var cdef: Dictionary = chs[cid]
+			if typeof(cdef) != TYPE_DICTIONARY:
+				continue
+			var creq: Dictionary = cdef.get("require", {})
+			if typeof(creq) != TYPE_DICTIONARY:
+				creq = {}
+			if _ng_plus_require_met(creq, meta) and not (str(cid) in uc):
+				uc.append(str(cid))
+				newly_ch.append(str(cid))
+	meta["unlocked_legacies"] = ul
+	meta["unlocked_challenges"] = uc
+	return {"legacies": newly_leg, "challenges": newly_ch}
+
+func _ng_plus_shard_bonus(runs: int) -> float:
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
+	var base_b: float = float(ng_plus_data.get("base_shard_bonus", MEMORY_SHARD_START_SHARDS))
+	var per: float = float(ng_plus_data.get("shard_bonus_per_run", 0.5))
+	var cap_b: float = float(ng_plus_data.get("max_shard_bonus", 8.0))
+	var bonus: float = base_b + max(0, runs - 1) * per
+	return min(bonus, cap_b)
+
+func _apply_ng_plus_effects(effects: Dictionary) -> void:
+	if typeof(effects) != TYPE_DICTIONARY or effects.is_empty():
+		return
+	for rk in ["shards", "resonance", "vitalis"]:
+		if effects.has(rk):
+			var add_v: float = float(effects.get(rk, 0.0))
+			resources[rk] = float(resources.get(rk, 0.0)) + add_v
+			GameEvents.resource_changed.emit(rk, float(resources.get(rk, 0.0)), add_v)
+	if effects.has("alignment"):
+		alignment = clamp(alignment + float(effects.get("alignment", 0.0)), -1.0, 1.0)
+	if effects.has("ember_pulse"):
+		ember_pulse = max(ember_pulse, float(effects.get("ember_pulse", 0.0)))
+	if effects.has("labor_boost"):
+		labor_boost = max(labor_boost, float(effects.get("labor_boost", 0.0)))
+	if effects.has("defense_strength"):
+		defense_strength = max(defense_strength, float(effects.get("defense_strength", 0.0)))
+	if effects.has("activate_challenge"):
+		var cid: String = str(effects.get("activate_challenge", ""))
+		if cid != "":
+			_activate_ng_plus_challenge(cid)
+
+func _activate_ng_plus_challenge(challenge_id: String) -> void:
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
+	var chs: Dictionary = ng_plus_data.get("challenges", {})
+	if typeof(chs) != TYPE_DICTIONARY or not chs.has(challenge_id):
+		return
+	var def: Dictionary = chs[challenge_id]
+	active_challenge = challenge_id
+	var mods: Dictionary = def.get("modifiers", {})
+	if typeof(mods) != TYPE_DICTIONARY:
+		mods = {}
+	ng_plus_prod_delta += float(mods.get("prod_mult_delta", 0.0))
+	ng_plus_raid_mod += float(mods.get("raid_pressure", 0.0))
+	ng_plus_raid_mod -= float(mods.get("raid_relief", 0.0))
+	if mods.has("start_align"):
+		alignment = clamp(alignment + float(mods.get("start_align", 0.0)), -1.0, 1.0)
+	flags["ng_plus_challenge"] = challenge_id
+	add_memory("ng_plus_challenge_active", {
+		"challenge_id": challenge_id,
+		"name": str(def.get("name", challenge_id)),
+		"desc": str(def.get("desc", "")),
+	})
+
+func _pick_legacy_for_ending(prior_end: String, meta: Dictionary) -> String:
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
+	var ul: Array = _ng_plus_array_ids(meta.get("unlocked_legacies", []))
+	var legs: Dictionary = ng_plus_data.get("legacies", {})
+	if typeof(legs) != TYPE_DICTIONARY:
+		return ""
+	# Prefer ending-matched legacy
+	for lid in ul:
+		var def: Dictionary = legs.get(lid, {})
+		if typeof(def) == TYPE_DICTIONARY and str(def.get("from_ending", "")) == prior_end:
+			return str(lid)
+	# Else deepest meta legacy if unlocked (full catalog / deep ash)
+	for prefer in ["full_echo_catalog", "deep_ash_memory"]:
+		if prefer in ul:
+			return prefer
+	if ul.size() > 0:
+		return str(ul[ul.size() - 1])
+	return ""
+
 func _seal_memory_shard() -> void:
 	# Called from trigger_ending. Writes pending shard outside save_auto so reset/editor wipe keep it.
 	if ending_id == "":
 		return
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
 	var meta: Dictionary = _load_ng_plus_meta()
 	var runs: int = int(meta.get("ng_plus_run", 0)) + 1
+	var marks_gain: int = 1
+	var mark_table: Dictionary = ng_plus_data.get("echo_marks_by_ending", {})
+	if typeof(mark_table) == TYPE_DICTIONARY and mark_table.has(ending_id):
+		marks_gain = int(mark_table.get(ending_id, 1))
+	var echo_total: int = int(meta.get("echo_marks", 0)) + marks_gain
+	var endings_seen: Array = _ng_plus_array_ids(meta.get("endings_seen", []))
+	if not (ending_id in endings_seen):
+		endings_seen.append(ending_id)
 	var shard: Dictionary = {
 		"ending_id": ending_id,
 		"outcome": ending_outcome,
@@ -3007,9 +3215,13 @@ func _seal_memory_shard() -> void:
 		"path_moral_harvest": path_moral_harvest,
 		"alignment": alignment,
 		"ng_plus_run": runs,
+		"echo_marks_gained": marks_gain,
+		"echo_marks_total": echo_total,
 		"sealed_at": total_play_time,
 	}
 	meta["ng_plus_run"] = runs
+	meta["echo_marks"] = echo_total
+	meta["endings_seen"] = endings_seen
 	meta["pending"] = true
 	meta["shard"] = shard
 	var hist = meta.get("history", [])
@@ -3020,13 +3232,45 @@ func _seal_memory_shard() -> void:
 	while hist.size() > 12:
 		hist.remove_at(0)
 	meta["history"] = hist
+	var newly: Dictionary = _ng_plus_unlock_from_meta(meta)
 	_save_ng_plus_meta(meta)
 	memory_shard_last = shard.duplicate(true)
+	echo_marks = echo_total
+	unlocked_legacies = _ng_plus_array_ids(meta.get("unlocked_legacies", []))
+	unlocked_challenges = _ng_plus_array_ids(meta.get("unlocked_challenges", []))
 	_log("A Memory shard settles in the ash. The next awakening may remember this cycle.", "revelation")
+	_log("Echo marks +" + str(marks_gain) + " (total " + str(echo_total) + ").", "story")
+	var legs: Dictionary = ng_plus_data.get("legacies", {})
+	for lid in newly.get("legacies", []):
+		var ldef: Dictionary = legs.get(lid, {}) if typeof(legs) == TYPE_DICTIONARY else {}
+		add_memory("ng_plus_legacy_unlock", {
+			"legacy_id": lid,
+			"name": str(ldef.get("name", lid)),
+			"desc": str(ldef.get("desc", "")),
+		})
+		_log("Legacy unlocked: " + str(ldef.get("name", lid)), "revelation")
+	var chs: Dictionary = ng_plus_data.get("challenges", {})
+	for cid in newly.get("challenges", []):
+		var cdef: Dictionary = chs.get(cid, {}) if typeof(chs) == TYPE_DICTIONARY else {}
+		add_memory("ng_plus_challenge_unlock", {
+			"challenge_id": cid,
+			"name": str(cdef.get("name", cid)),
+			"desc": str(cdef.get("desc", "")),
+		})
+		_log("Challenge remembered: " + str(cdef.get("name", cid)), "revelation")
 
 func _apply_memory_shard_carry() -> void:
 	# One-shot: if pending shard exists, seed this fresh run then clear pending.
+	active_legacy = ""
+	active_challenge = ""
+	ng_plus_prod_delta = 0.0
+	ng_plus_raid_mod = 0.0
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
 	var meta: Dictionary = _load_ng_plus_meta()
+	echo_marks = int(meta.get("echo_marks", 0))
+	unlocked_legacies = _ng_plus_array_ids(meta.get("unlocked_legacies", []))
+	unlocked_challenges = _ng_plus_array_ids(meta.get("unlocked_challenges", []))
 	if not bool(meta.get("pending", false)):
 		memory_shard_active = false
 		ng_plus_run = int(meta.get("ng_plus_run", 0))
@@ -3039,9 +3283,12 @@ func _apply_memory_shard_carry() -> void:
 	ng_plus_run = int(meta.get("ng_plus_run", int(shard.get("ng_plus_run", 1))))
 	memory_shard_active = true
 	memory_shard_last = shard.duplicate(true)
-	resources["shards"] = float(resources.get("shards", 0.0)) + MEMORY_SHARD_START_SHARDS
+	var shard_bonus: float = _ng_plus_shard_bonus(ng_plus_run)
+	resources["shards"] = float(resources.get("shards", 0.0)) + shard_bonus
 	var prior_end: String = str(shard.get("ending_id", ""))
 	var prior_out: String = str(shard.get("outcome", ""))
+	var prior_align: float = float(shard.get("alignment", 0.0))
+	# Ending flavor (kept from R5/R7)
 	if prior_end == "nurture_circle":
 		alignment = clamp(alignment + 0.05, -1.0, 1.0)
 	elif prior_end == "harvest_dominion":
@@ -3055,6 +3302,42 @@ func _apply_memory_shard_carry() -> void:
 	elif prior_end == "pyrrhic_crown":
 		alignment = clamp(alignment - 0.03, -1.0, 1.0)
 		ember_pulse = max(ember_pulse, 0.4)
+	# Prior alignment soft difficulty / flavor
+	var flavor: Dictionary = ng_plus_data.get("alignment_flavor", {})
+	if typeof(flavor) != TYPE_DICTIONARY:
+		flavor = {}
+	if prior_align >= 0.2:
+		ng_plus_raid_mod -= float(flavor.get("nurture_raid_relief", 0.03))
+	elif prior_align <= -0.2:
+		ng_plus_raid_mod += float(flavor.get("harvest_raid_pressure", 0.04))
+	# Apply matched legacy (+ optional challenge via activate_challenge)
+	var lid: String = _pick_legacy_for_ending(prior_end, meta)
+	if lid != "":
+		var legs: Dictionary = ng_plus_data.get("legacies", {})
+		var ldef: Dictionary = legs.get(lid, {}) if typeof(legs) == TYPE_DICTIONARY else {}
+		active_legacy = lid
+		_apply_ng_plus_effects(ldef.get("apply", {}) if typeof(ldef) == TYPE_DICTIONARY else {})
+		flags["ng_plus_legacy"] = lid
+		add_memory("ng_plus_legacy_apply", {
+			"legacy_id": lid,
+			"name": str(ldef.get("name", lid)),
+			"desc": str(ldef.get("desc", "")),
+		})
+		_log("Legacy carried: " + str(ldef.get("name", lid)), "story")
+	# Auto-activate ending-matched challenge if unlocked and not already set by legacy
+	if active_challenge == "":
+		var chs: Dictionary = ng_plus_data.get("challenges", {})
+		if typeof(chs) == TYPE_DICTIONARY:
+			for cid in unlocked_challenges:
+				var cdef: Dictionary = chs.get(cid, {})
+				if typeof(cdef) != TYPE_DICTIONARY:
+					continue
+				var creq: Dictionary = cdef.get("require", {})
+				if typeof(creq) == TYPE_DICTIONARY and str(creq.get("ending_seen", "")) == prior_end:
+					# Only auto-activate simple single-ending challenges (min_runs<=1 or unmet skips)
+					if int(creq.get("min_runs", 1)) <= ng_plus_run:
+						_activate_ng_plus_challenge(str(cid))
+						break
 	flags["ng_plus"] = true
 	flags["ng_plus_from_ending"] = prior_end
 	add_memory("ng_plus_memory_shard", {
@@ -3062,11 +3345,16 @@ func _apply_memory_shard_carry() -> void:
 		"outcome": prior_out,
 		"early_choice": str(shard.get("early_choice", "")),
 		"ng_plus_run": ng_plus_run,
+		"echo_marks": echo_marks,
+		"legacy": active_legacy,
+		"challenge": active_challenge,
 	})
 	meta["pending"] = false
 	meta["last_applied"] = shard.duplicate(true)
+	meta["last_legacy"] = active_legacy
+	meta["last_challenge"] = active_challenge
 	_save_ng_plus_meta(meta)
-	GameEvents.resource_changed.emit("shards", float(resources.get("shards", 0.0)), MEMORY_SHARD_START_SHARDS)
+	GameEvents.resource_changed.emit("shards", float(resources.get("shards", 0.0)), shard_bonus)
 	_log("Something warm remains in your palm — a Memory shard from a cycle the ash will not fully forget.", "story")
 
 func get_memory_shard_info() -> Dictionary:
@@ -3074,5 +3362,44 @@ func get_memory_shard_info() -> Dictionary:
 		"active": memory_shard_active,
 		"ng_plus_run": ng_plus_run,
 		"last": memory_shard_last.duplicate(true),
+		"echo_marks": echo_marks,
+		"unlocked_legacies": unlocked_legacies.duplicate(),
+		"unlocked_challenges": unlocked_challenges.duplicate(),
+		"active_legacy": active_legacy,
+		"active_challenge": active_challenge,
 	}
+
+func get_ng_plus_summary() -> Dictionary:
+	# For ending overlay / Memory UI: what the next wanderer inherits
+	if ng_plus_data.is_empty():
+		_load_ng_plus_data()
+	var meta: Dictionary = _load_ng_plus_meta()
+	var wanderer: String = ""
+	if ending_id != "" and ending_data.has(ending_id):
+		wanderer = str(ending_data[ending_id].get("legacy", ""))
+	elif memory_shard_last.has("ending_id") and ending_data.has(str(memory_shard_last.get("ending_id", ""))):
+		wanderer = str(ending_data[str(memory_shard_last.get("ending_id", ""))].get("legacy", ""))
+	var leg_name: String = active_legacy
+	var legs: Dictionary = ng_plus_data.get("legacies", {})
+	if typeof(legs) == TYPE_DICTIONARY and legs.has(active_legacy):
+		leg_name = str(legs[active_legacy].get("name", active_legacy))
+	var ch_name: String = active_challenge
+	var chs: Dictionary = ng_plus_data.get("challenges", {})
+	if typeof(chs) == TYPE_DICTIONARY and chs.has(active_challenge):
+		ch_name = str(chs[active_challenge].get("name", active_challenge))
+	return {
+		"ng_plus_run": int(meta.get("ng_plus_run", ng_plus_run)),
+		"echo_marks": int(meta.get("echo_marks", echo_marks)),
+		"endings_seen": _ng_plus_array_ids(meta.get("endings_seen", [])),
+		"unlocked_legacies": _ng_plus_array_ids(meta.get("unlocked_legacies", unlocked_legacies)),
+		"unlocked_challenges": _ng_plus_array_ids(meta.get("unlocked_challenges", unlocked_challenges)),
+		"pending": bool(meta.get("pending", false)),
+		"active_legacy": active_legacy,
+		"active_legacy_name": leg_name,
+		"active_challenge": active_challenge,
+		"active_challenge_name": ch_name,
+		"wanderer_line": wanderer,
+		"shard_bonus_next": _ng_plus_shard_bonus(int(meta.get("ng_plus_run", ng_plus_run))),
+	}
+
 

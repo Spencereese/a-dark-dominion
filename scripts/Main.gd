@@ -1999,6 +1999,13 @@ func _ensure_ending_overlay() -> void:
 	legacy.scroll_active = false
 	legacy.custom_minimum_size = Vector2(460, 40)
 	vbox.add_child(legacy)
+	var meta_l := RichTextLabel.new()
+	meta_l.name = "EndingNgPlusMeta"
+	meta_l.bbcode_enabled = true
+	meta_l.fit_content = true
+	meta_l.scroll_active = false
+	meta_l.custom_minimum_size = Vector2(460, 48)
+	vbox.add_child(meta_l)
 	var btn := Button.new()
 	btn.name = "EndingRestart"
 	btn.text = "Begin Again (Reset)"
@@ -2020,6 +2027,7 @@ func _refresh_ending_overlay() -> void:
 	var body_l: RichTextLabel = ending_panel.find_child("EndingBody", true, false) as RichTextLabel
 	var stats_l: Label = ending_panel.find_child("EndingStats", true, false) as Label
 	var legacy_l: RichTextLabel = ending_panel.find_child("EndingLegacy", true, false) as RichTextLabel
+	var ng_meta_l: RichTextLabel = ending_panel.find_child("EndingNgPlusMeta", true, false) as RichTextLabel
 	var badge_txt: String = str(info.get("badge", outcome.to_upper()))
 	if badge_l:
 		badge_l.text = badge_txt
@@ -2046,6 +2054,35 @@ func _refresh_ending_overlay() -> void:
 			legacy_l.text = "[center][i]" + leg + "[/i][/center]"
 		else:
 			legacy_l.text = ""
+	if ng_meta_l:
+		var sum: Dictionary = {}
+		if GameState.has_method("get_ng_plus_summary"):
+			sum = GameState.get_ng_plus_summary()
+		var parts: PackedStringArray = PackedStringArray()
+		var marks: int = int(sum.get("echo_marks", 0))
+		var runs: int = int(sum.get("ng_plus_run", 0))
+		if marks > 0 or runs > 0:
+			parts.append("Echo marks: %d  |  Cycles sealed: %d" % [marks, runs])
+		var ul: Array = sum.get("unlocked_legacies", [])
+		if typeof(ul) == TYPE_ARRAY and ul.size() > 0:
+			parts.append("Legacies: " + ", ".join(PackedStringArray(ul)))
+		var uc: Array = sum.get("unlocked_challenges", [])
+		if typeof(uc) == TYPE_ARRAY and uc.size() > 0:
+			parts.append("Challenges: " + ", ".join(PackedStringArray(uc)))
+		var bonus: float = float(sum.get("shard_bonus_next", 0.0))
+		if bonus > 0.0 and bool(sum.get("pending", false)):
+			parts.append("Next awaken shard bonus: %.1f" % bonus)
+		if parts.size() > 0:
+			ng_meta_l.text = "[center]" + "\n".join(parts) + "[/center]"
+		else:
+			ng_meta_l.text = ""
+	var restart_btn: Button = ending_panel.find_child("EndingRestart", true, false) as Button
+	if restart_btn and GameState.has_method("get_ng_plus_summary"):
+		var sum2: Dictionary = GameState.get_ng_plus_summary()
+		if bool(sum2.get("pending", false)):
+			restart_btn.text = "Awaken Next Cycle (NG+)"
+		else:
+			restart_btn.text = "Begin Again (Reset)"
 
 func _on_ending_restart_pressed() -> void:
 	# Reuse Reset path so panels rebuild cleanly

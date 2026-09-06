@@ -1,0 +1,105 @@
+﻿{
+  "base_shard_bonus": 3.0,
+  "shard_bonus_per_run": 0.5,
+  "max_shard_bonus": 8.0,
+  "echo_marks_by_ending": {
+    "nurture_circle": 2,
+    "harvest_dominion": 2,
+    "collapse_ash": 1,
+    "true_echo": 4,
+    "sparse_hearth": 3,
+    "pyrrhic_crown": 3
+  },
+  "alignment_flavor": {
+    "nurture_raid_relief": 0.03,
+    "harvest_raid_pressure": 0.04,
+    "collapse_ember_floor": 0.5
+  },
+  "legacies": {
+    "warm_lines": {
+      "id": "warm_lines",
+      "name": "Warm Lines",
+      "desc": "Prior nurture left warmth along the veins.",
+      "require": { "ending_seen": "nurture_circle" },
+      "from_ending": "nurture_circle",
+      "apply": { "shards": 1.5, "resonance": 1.0, "alignment": 0.03 }
+    },
+    "bound_hands": {
+      "id": "bound_hands",
+      "name": "Bound Hands",
+      "desc": "Prior harvest left lines already marked for obedience.",
+      "require": { "ending_seen": "harvest_dominion" },
+      "from_ending": "harvest_dominion",
+      "apply": { "shards": 1.5, "vitalis": 1.0, "alignment": -0.03, "labor_boost": 0.12 }
+    },
+    "scattered_embers": {
+      "id": "scattered_embers",
+      "name": "Scattered Embers",
+      "desc": "Collapse left stubborn sparks in the ash.",
+      "require": { "ending_seen": "collapse_ash" },
+      "from_ending": "collapse_ash",
+      "apply": { "ember_pulse": 0.8, "shards": 1.0 }
+    },
+    "open_gate": {
+      "id": "open_gate",
+      "name": "Open Gate",
+      "desc": "True echo left a gate that asks nothing.",
+      "require": { "ending_seen": "true_echo" },
+      "from_ending": "true_echo",
+      "apply": { "shards": 2.0, "resonance": 2.0, "alignment": 0.06 }
+    },
+    "thin_fire": {
+      "id": "thin_fire",
+      "name": "Thin Fire",
+      "desc": "Sparse hearth left a challenge written in absence.",
+      "require": { "ending_seen": "sparse_hearth" },
+      "from_ending": "sparse_hearth",
+      "apply": { "shards": 1.0, "ember_pulse": 0.5, "activate_challenge": "no_havens" }
+    },
+    "ash_throne": {
+      "id": "ash_throne",
+      "name": "Ash Throne",
+      "desc": "Pyrrhic crown left a pulse that remembers the cost.",
+      "require": { "ending_seen": "pyrrhic_crown" },
+      "from_ending": "pyrrhic_crown",
+      "apply": { "shards": 2.5, "alignment": -0.05, "defense_strength": 0.5 }
+    },
+    "deep_ash_memory": {
+      "id": "deep_ash_memory",
+      "name": "Deep Ash Memory",
+      "desc": "Three cycles leave marks the ash cannot scrape clean.",
+      "require": { "min_runs": 3, "min_echo_marks": 5 },
+      "apply": { "shards": 2.0, "resonance": 1.0, "vitalis": 1.0 }
+    },
+    "full_echo_catalog": {
+      "id": "full_echo_catalog",
+      "name": "Full Echo Catalog",
+      "desc": "Every ending remembered. The next wanderer inherits the whole map of choice.",
+      "require": { "endings_seen_count": 6 },
+      "apply": { "shards": 3.0, "resonance": 2.0, "vitalis": 2.0, "ember_pulse": 1.0 }
+    }
+  },
+  "challenges": {
+    "no_havens": {
+      "id": "no_havens",
+      "name": "No-Havens Echo",
+      "desc": "Harder numbers; the sparse path's discipline lingers.",
+      "require": { "ending_seen": "sparse_hearth" },
+      "modifiers": { "prod_mult_delta": -0.08, "raid_pressure": 0.02, "start_align": 0.02 }
+    },
+    "speed_dominion": {
+      "id": "speed_dominion",
+      "name": "Speedrun Dominion",
+      "desc": "Prior harvest taught haste; veins answer faster and raids press harder.",
+      "require": { "ending_seen": "harvest_dominion", "min_runs": 2 },
+      "modifiers": { "prod_mult_delta": 0.1, "raid_pressure": 0.06, "start_align": -0.04 }
+    },
+    "mercy_discipline": {
+      "id": "mercy_discipline",
+      "name": "Mercy Discipline",
+      "desc": "Prior nurture softens raids but slows raw yield.",
+      "require": { "ending_seen": "nurture_circle", "min_runs": 2 },
+      "modifiers": { "prod_mult_delta": -0.05, "raid_relief": 0.05, "start_align": 0.04 }
+    }
+  }
+}
