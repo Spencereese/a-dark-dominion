@@ -1,0 +1,68 @@
+﻿{
+  "path_raid": {
+    "id": "path_raid",
+    "title": "Ash Along the Veins",
+    "prompt": "The ash moves along the old veins. Watchers call for orders. The Bound on the lines wait on your will.",
+    "options": [
+      {
+        "id": "hold_watch",
+        "label": "Hold the Watch",
+        "tip": "Commit defense strength. Safer for those who walk; the circle steadies.",
+        "cost": {},
+        "effects": {
+          "use_defense": 2.5,
+          "mitigation_bonus": 0.35,
+          "align_delta": 0.02,
+          "log": "You hold the watch. Eyes on the ash; the Bound feel the circle with them.",
+          "log_category": "story",
+          "memory_key": "raid_response_hold"
+        }
+      },
+      {
+        "id": "offer_shelter",
+        "label": "Pull Them Back",
+        "tip": "Spend shards to pull walkers to shelter. Costly; lives kept.",
+        "cost": {
+          "shards": 10
+        },
+        "effects": {
+          "force_mitigated": true,
+          "align_delta": 0.045,
+          "log": "You pull them back to the circle. Shards burn so the Bound may stay.",
+          "log_category": "story",
+          "memory_key": "raid_response_shelter"
+        }
+      },
+      {
+        "id": "strike_back",
+        "label": "Strike the Ash",
+        "tip": "Retaliate. Risk more losses; seize shards and harden the will.",
+        "cost": {},
+        "effects": {
+          "mitigation_penalty": 0.25,
+          "raid_retaliation_add": 0.06,
+          "shards_on_mitigated": 10,
+          "align_delta": -0.05,
+          "log": "You strike the ash. The veins answer in kind. Something in the Bound goes quieter.",
+          "log_category": "revelation",
+          "memory_key": "raid_response_strike"
+        }
+      },
+      {
+        "id": "abandon_line",
+        "label": "Abandon the Line",
+        "tip": "Let the vein take them. Preserve the hearth; the ash remembers the cost.",
+        "cost": {},
+        "effects": {
+          "force_loss": true,
+          "pop_loss_bonus": 1,
+          "add_defense": 1.5,
+          "align_delta": -0.025,
+          "log": "You abandon the line. The hearth holds. Not all who walked return.",
+          "log_category": "revelation",
+          "memory_key": "raid_response_abandon"
+        }
+      }
+    ]
+  }
+}

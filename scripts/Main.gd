@@ -26,6 +26,10 @@ var outlands_content: VBoxContainer = null
 # Styled differently (header in revelation gold, options as prominent buttons). Can pause time for the moment to land.
 var choice_prompt_panel: PanelContainer = null
 var choice_prompt_content: VBoxContainer = null
+# R6 raid/defense encounter UI (mirrors choice prompt pattern)
+var raid_encounter_panel: PanelContainer = null
+var raid_encounter_content: VBoxContainer = null
+var _raid_time_was_paused_by_prompt: bool = false
 var _choice_time_was_paused_by_prompt: bool = false
 
 # Accelerated visual RTS/TD map + Memory (per approved plan)
@@ -72,6 +76,10 @@ func _ready() -> void:
 	GameEvents.choice_offered.connect(_on_choice_offered)
 	GameEvents.choice_resolved.connect(_on_choice_resolved)
 	GameEvents.raid_occurred.connect(_on_raid_occurred)
+	if GameEvents.has_signal("raid_encounter_offered"):
+		GameEvents.raid_encounter_offered.connect(_on_raid_encounter_offered)
+	if GameEvents.has_signal("raid_encounter_resolved"):
+		GameEvents.raid_encounter_resolved.connect(_on_raid_encounter_resolved)
 	GameEvents.ending_reached.connect(_on_ending_reached)
 	GameEvents.sfx_cue.connect(_on_sfx_cue)
 	GameEvents.whisper_triggered.connect(_on_whisper_triggered)
@@ -893,6 +901,131 @@ func _on_action_performed(action_id: String, success: bool) -> void:
 	elif action_id == "defend_paths":
 		_play_ember_cue(0.6)  # quiet "watch set" tone
 
+
+func _on_raid_encounter_offered(_raid_id: String) -> void:
+	_show_raid_encounter()
+	_play_raid_cue(false)
+	_refresh_map()
+
+func _on_raid_encounter_resolved(_raid_id: String, _choice_id: String) -> void:
+	_hide_raid_encounter()
+	_refresh_actions()
+	_refresh_resources_display()
+	_update_status()
+	_refresh_memories()
+	_refresh_map()
+
+func _show_raid_encounter() -> void:
+	if not GameState or not GameState.has_method("has_pending_raid"):
+		return
+	if not GameState.has_pending_raid():
+		_hide_raid_encounter()
+		return
+	_ensure_raid_encounter()
+	if raid_encounter_content == null or not is_instance_valid(raid_encounter_content):
+		return
+	for c in raid_encounter_content.get_children():
+		c.queue_free()
+	var pending: Dictionary = GameState.get_pending_raid()
+	var header: Label = Label.new()
+	header.text = str(pending.get("title", "Ash Along the Veins"))
+	header.add_theme_font_size_override("font_size", 14)
+	header.add_theme_color_override("font_color", Color(0.85, 0.45, 0.35))
+	raid_encounter_content.add_child(header)
+	var prompt: Label = Label.new()
+	prompt.text = str(pending.get("prompt", "The ash moves along the old veins."))
+	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	prompt.custom_minimum_size = Vector2(280, 0)
+	prompt.add_theme_color_override("font_color", Color(0.9, 0.82, 0.72))
+	prompt.add_theme_font_size_override("font_size", 11)
+	raid_encounter_content.add_child(prompt)
+	var def_lbl: Label = Label.new()
+	def_lbl.text = "Defense at the veins: %.1f" % float(pending.get("def_val", 0.0))
+	def_lbl.add_theme_font_size_override("font_size", 10)
+	def_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
+	raid_encounter_content.add_child(def_lbl)
+	var opts = pending.get("options", [])
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 3)
+	if typeof(opts) == TYPE_ARRAY:
+		for o in opts:
+			var b: Button = Button.new()
+			b.text = str(o.get("label", "Respond"))
+			b.tooltip_text = str(o.get("tip", ""))
+			b.custom_minimum_size = Vector2(0, 28)
+			b.add_theme_color_override("font_color", Color(0.95, 0.88, 0.78))
+			b.add_theme_font_size_override("font_size", 10)
+			var oid: String = str(o.get("id", ""))
+			b.pressed.connect(_on_raid_response_selected.bind(oid))
+			vbox.add_child(b)
+	raid_encounter_content.add_child(vbox)
+	var note: Label = Label.new()
+	note.text = "Your order will be remembered by the ash."
+	note.add_theme_font_size_override("font_size", 9)
+	note.add_theme_color_override("font_color", Color(0.55, 0.5, 0.45))
+	raid_encounter_content.add_child(note)
+	raid_encounter_panel.show()
+	if GameState and not GameState.is_paused and GameState.time_scale > 0:
+		_raid_time_was_paused_by_prompt = true
+		GameState.set_time_scale(0.0)
+
+func _on_raid_response_selected(choice_id: String) -> void:
+	if choice_id == "" or not GameState:
+		return
+	var res: Dictionary = {}
+	if GameState.has_method("resolve_raid_encounter"):
+		res = GameState.resolve_raid_encounter(choice_id)
+	_hide_raid_encounter()
+	if bool(res.get("ok", false)):
+		_refresh_actions()
+		_refresh_resources_display()
+		_update_status()
+		_refresh_memories()
+		_refresh_map()
+		_play_raid_cue(bool(res.get("mitigated", false)))
+
+func _hide_raid_encounter() -> void:
+	if raid_encounter_panel and is_instance_valid(raid_encounter_panel):
+		raid_encounter_panel.hide()
+	if _raid_time_was_paused_by_prompt and GameState and GameState.is_paused:
+		GameState.set_time_scale(1.0)
+		_raid_time_was_paused_by_prompt = false
+
+func _ensure_raid_encounter() -> void:
+	if raid_encounter_panel != null and is_instance_valid(raid_encounter_panel):
+		return
+	var main_area: HBoxContainer = main_area_node if main_area_node else get_node_or_null("Margin/VBox/MainArea") as HBoxContainer
+	raid_encounter_panel = PanelContainer.new()
+	raid_encounter_panel.name = "RaidEncounterPanel"
+	raid_encounter_panel.custom_minimum_size = Vector2(300, 0)
+	raid_encounter_panel.size_flags_horizontal = 0
+	var dark_style: StyleBoxFlat = StyleBoxFlat.new()
+	dark_style.bg_color = Color(0.05, 0.02, 0.02, 0.97)
+	dark_style.border_width_left = 1
+	dark_style.border_width_top = 1
+	dark_style.border_width_right = 1
+	dark_style.border_width_bottom = 1
+	dark_style.border_color = Color(0.55, 0.28, 0.22, 1)
+	dark_style.corner_radius_top_left = 4
+	dark_style.corner_radius_top_right = 4
+	dark_style.corner_radius_bottom_right = 4
+	dark_style.corner_radius_bottom_left = 4
+	raid_encounter_panel.add_theme_stylebox_override("panel", dark_style)
+	var marg: MarginContainer = MarginContainer.new()
+	marg.add_theme_constant_override("margin_left", 6)
+	marg.add_theme_constant_override("margin_top", 4)
+	marg.add_theme_constant_override("margin_right", 6)
+	marg.add_theme_constant_override("margin_bottom", 4)
+	raid_encounter_panel.add_child(marg)
+	raid_encounter_content = VBoxContainer.new()
+	raid_encounter_content.add_theme_constant_override("separation", 4)
+	marg.add_child(raid_encounter_content)
+	if main_area:
+		main_area.add_child(raid_encounter_panel)
+		main_area.move_child(raid_encounter_panel, 0)
+	raid_encounter_panel.hide()
+
+
 func _on_raid_occurred(mitigated: bool, pop_loss: int) -> void:
 	# Visual payoff for defense system: ash "reacts" briefly on raid (even mitigated). Ties the world feeling to the mechanic.
 	# Stronger reaction on loss. Also forces refresh so defense value (if surfaced) would update.
@@ -936,6 +1069,11 @@ func _on_speed_pressed(btn: Button) -> void:
 			choice_prompt_panel.queue_free()
 			choice_prompt_panel = null
 			choice_prompt_content = null
+		if raid_encounter_panel and is_instance_valid(raid_encounter_panel):
+			raid_encounter_panel.queue_free()
+			raid_encounter_panel = null
+			raid_encounter_content = null
+			_raid_time_was_paused_by_prompt = false
 		if map_panel and is_instance_valid(map_panel):
 			map_panel.queue_free()
 			map_panel = null
@@ -1860,6 +1998,10 @@ func _on_ending_restart_pressed() -> void:
 		choice_prompt_panel.queue_free()
 		choice_prompt_panel = null
 		choice_prompt_content = null
+	if raid_encounter_panel and is_instance_valid(raid_encounter_panel):
+		raid_encounter_panel.queue_free()
+		raid_encounter_panel = null
+		raid_encounter_content = null
 	if map_panel and is_instance_valid(map_panel):
 		map_panel.queue_free()
 		map_panel = null

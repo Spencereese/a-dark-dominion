@@ -19,6 +19,8 @@ signal log_message(text: String, category: String)  # category: "story", "system
 signal choice_offered(event_key: String)  # polish: proper early choice events surface here for UI
 signal choice_resolved(event_key: String, choice_id: String)
 signal raid_occurred(mitigated: bool, pop_loss: int)  # for defense system: UI reactions, sounds, stronger narrative hooks on path threats
+signal raid_encounter_offered(raid_id: String)
+signal raid_encounter_resolved(raid_id: String, choice_id: String)
 signal ending_reached(ending_id: String, outcome: String)  # R3: nurture/harvest win or collapse lose — Main shows overlay
 signal sfx_cue(cue: String, params: Dictionary)  # sparse triggers from GS/Narrative for audio: revelation, first_bound, expedition_*, reframe_sting etc. Decouples from Main impl.
 

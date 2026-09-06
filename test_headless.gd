@@ -82,6 +82,29 @@ func _run_tests() -> void:
 				_ok("ending present: " + eid)
 			else:
 				_fail("ending missing: " + eid)
+	var raids_data: Dictionary = _load_json("res://data/raids.json")
+	if raids_data.is_empty():
+		_fail("raids.json failed")
+	else:
+		_ok("raids.json (%d encounters)" % raids_data.keys().size())
+		if raids_data.has("path_raid"):
+			var ropts = raids_data["path_raid"].get("options", [])
+			if typeof(ropts) == TYPE_ARRAY and ropts.size() >= 4:
+				_ok("path_raid has %d options" % ropts.size())
+			else:
+				_fail("path_raid options incomplete")
+			for oid in ["hold_watch", "offer_shelter", "strike_back", "abandon_line"]:
+				var found: bool = false
+				for o in ropts:
+					if str(o.get("id", "")) == oid:
+						found = true
+						break
+				if found:
+					_ok("raid option present: " + oid)
+				else:
+					_fail("raid option missing: " + oid)
+		else:
+			_fail("path_raid missing from raids.json")
 
 	# --- Scenes ---
 	print("Checking scenes...")
@@ -675,6 +698,205 @@ func _run_tests() -> void:
 		_ok("faction buildings still in data after R5")
 	else:
 		_fail("faction buildings missing after R5")
+
+
+	# --- R6 Raid/defense encounter UI (data-driven, Memory + GameState) ---
+	print("Simulating raid/defense encounter (offer -> resolve responses)...")
+	if not gs.has_method("offer_raid_encounter") or not gs.has_method("resolve_raid_encounter"):
+		_fail("raid encounter methods missing")
+	else:
+		_ok("raid encounter methods present")
+	if gs.raid_data.is_empty() and gs.has_method("_load_raid_data"):
+		gs._load_raid_data()
+	if gs.raid_data.has("path_raid"):
+		_ok("GameState.raid_data loaded path_raid")
+	else:
+		_fail("GameState.raid_data missing path_raid")
+
+	# Shelter path: Pull Them Back must mitigate + write Memory
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.phase = "outlands"
+	gs.flags["outlands_reached"] = true
+	gs.early_choice = "shelter"
+	gs.alignment = 0.2
+	gs.population = 8
+	gs.ember_pulse = 5.0
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.discovered_paths.clear()
+	gs.discovered_paths.append("vein_of_fading_echoes")
+	gs.defense_strength = 1.0
+	gs.resources["shards"] = 40.0
+	gs.memory_entries.clear()
+	gs.pending_raid.clear()
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("offer_raid_encounter failed")
+	else:
+		_ok("raid encounter offered")
+	if gs.has_pending_raid():
+		_ok("pending_raid set after offer")
+	else:
+		_fail("pending_raid empty after offer")
+	var pending: Dictionary = gs.get_pending_raid()
+	if str(pending.get("raid_id", "")) == "path_raid" and pending.get("options", []).size() >= 4:
+		_ok("pending snapshot has options")
+	else:
+		_fail("pending snapshot incomplete")
+	if not gs.offer_raid_encounter():
+		_ok("second offer blocked while pending")
+	else:
+		_fail("second offer should fail while pending")
+	var shel_res: Dictionary = gs.resolve_raid_encounter("offer_shelter")
+	if bool(shel_res.get("ok", false)) and bool(shel_res.get("mitigated", false)):
+		_ok("offer_shelter mitigated raid")
+	else:
+		_fail("offer_shelter should mitigate: " + str(shel_res))
+	if float(gs.resources.get("shards", 0.0)) <= 30.01:
+		_ok("shelter spent shards (" + str(gs.resources.get("shards", 0.0)) + ")")
+	else:
+		_fail("shelter did not spend shards")
+	if not gs.has_pending_raid():
+		_ok("pending cleared after resolve")
+	else:
+		_fail("pending still set after resolve")
+	var has_shel_mem: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "raid_response_shelter":
+			has_shel_mem = true
+			break
+	if has_shel_mem:
+		_ok("memory_entries has raid_response_shelter")
+	else:
+		_fail("memory missing raid_response_shelter")
+
+	# Hold watch: spends defense, writes hold memory
+	gs.pending_raid.clear()
+	gs.memory_entries.clear()
+	gs.defense_strength = 6.0
+	gs.population = 8
+	gs.resources["shards"] = 40.0
+	gs.game_ended = false
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("offer for hold_watch failed")
+	var hold_before: float = gs.defense_strength
+	var hold_res: Dictionary = gs.resolve_raid_encounter("hold_watch")
+	if bool(hold_res.get("ok", false)):
+		_ok("hold_watch resolved")
+	else:
+		_fail("hold_watch resolve failed")
+	if gs.defense_strength < hold_before - 1.0:
+		_ok("hold_watch spent defense (%.1f -> %.1f)" % [hold_before, gs.defense_strength])
+	else:
+		_fail("hold_watch should spend defense")
+	var has_hold_mem: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "raid_response_hold":
+			has_hold_mem = true
+			break
+	if has_hold_mem:
+		_ok("memory_entries has raid_response_hold")
+	else:
+		_fail("memory missing raid_response_hold")
+
+	# Strike back: alignment drops / retaliation flag, Memory
+	gs.pending_raid.clear()
+	gs.memory_entries.clear()
+	gs.early_choice = "demand"
+	gs.alignment = -0.1
+	gs.defense_strength = 8.0
+	gs.population = 8
+	gs.flags["raid_retaliation"] = 0.0
+	gs.game_ended = false
+	var align_before: float = gs.alignment
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("offer for strike_back failed")
+	var strike_res: Dictionary = gs.resolve_raid_encounter("strike_back")
+	if bool(strike_res.get("ok", false)):
+		_ok("strike_back resolved")
+	else:
+		_fail("strike_back resolve failed")
+	if gs.alignment < align_before:
+		_ok("strike_back shifted alignment down")
+	else:
+		_fail("strike_back should lower alignment")
+	if float(gs.flags.get("raid_retaliation", 0.0)) > 0.0:
+		_ok("strike_back added raid_retaliation flag")
+	else:
+		_fail("strike_back missing retaliation flag")
+	var has_strike_mem: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "raid_response_strike":
+			has_strike_mem = true
+			break
+	if has_strike_mem:
+		_ok("memory_entries has raid_response_strike")
+	else:
+		_fail("memory missing raid_response_strike")
+
+	# Abandon line: force loss + Memory + defense bump
+	gs.pending_raid.clear()
+	gs.memory_entries.clear()
+	gs.population = 8
+	gs.defense_strength = 0.5
+	gs.game_ended = false
+	gs.ending_id = ""
+	var pop_before: int = gs.population
+	var def_before_ab: float = gs.defense_strength
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("offer for abandon_line failed")
+	var ab_res: Dictionary = gs.resolve_raid_encounter("abandon_line")
+	if bool(ab_res.get("ok", false)) and (not bool(ab_res.get("mitigated", true))) and int(ab_res.get("pop_loss", 0)) > 0:
+		_ok("abandon_line forced loss (pop_loss=%d)" % int(ab_res.get("pop_loss", 0)))
+	else:
+		_fail("abandon_line should force loss: " + str(ab_res))
+	if gs.population < pop_before:
+		_ok("abandon_line reduced population")
+	else:
+		_fail("abandon_line pop unchanged")
+	if gs.defense_strength > def_before_ab:
+		_ok("abandon_line added hearth defense")
+	else:
+		_fail("abandon_line should add_defense")
+	var has_ab_mem: bool = false
+	var has_loss_mem: bool = false
+	for e in gs.memory_entries:
+		var k: String = str(e.get("key", ""))
+		if k == "raid_response_abandon":
+			has_ab_mem = true
+		if k == "raid_loss":
+			has_loss_mem = true
+	if has_ab_mem:
+		_ok("memory_entries has raid_response_abandon")
+	else:
+		_fail("memory missing raid_response_abandon")
+	if has_loss_mem:
+		_ok("memory_entries has raid_loss after abandon")
+	else:
+		_fail("memory missing raid_loss after abandon")
+
+	# Insufficient shards for shelter should leave pending intact
+	gs.pending_raid.clear()
+	gs.resources["shards"] = 2.0
+	gs.population = 6
+	gs.game_ended = false
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("offer for cost-fail case failed")
+	var fail_res: Dictionary = gs.resolve_raid_encounter("offer_shelter")
+	if not bool(fail_res.get("ok", true)) and gs.has_pending_raid():
+		_ok("offer_shelter blocked on low shards; pending kept")
+	else:
+		_fail("cost fail should keep pending: " + str(fail_res) + " pending=" + str(gs.has_pending_raid()))
+	gs.resolve_raid_encounter("hold_watch")
+
+	var bd6: Dictionary = _load_json("res://data/buildings.json")
+	var ed6: Dictionary = _load_json("res://data/endings.json")
+	if bd6.has("echo_choir") and bd6.has("ash_binder") and ed6.has("nurture_circle"):
+		_ok("faction + endings data intact after R6")
+	else:
+		_fail("prior-round data missing after R6")
+
 
 	_finish()
 

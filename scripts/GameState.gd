@@ -57,6 +57,9 @@ var cooldowns: Dictionary = {}  # for data-driven cooldown actions (e.g. gather)
 # Outlands defense timing (runtime, not critical for save but included for consistency)
 var last_path_defense: float = 0.0  # total_play_time when paths last defended
 var defense_strength: float = 0.0  # decays over time; built by Defend action + Watch Spire; makes raids less likely to bite (Phase 4 TD-lite)
+# R6 raid/defense encounter (player-facing; pending until resolve_raid_encounter)
+var raid_data: Dictionary = {}  # loaded from data/raids.json
+var pending_raid: Dictionary = {}  # snapshot while encounter UI is open
 
 # Production queues labor (C&C flavor per approved plan): labor from completed halls auto/boost assigned to defense/expeditions (like foragers but from production)
 var production_labor: float = 0.0
@@ -119,6 +122,7 @@ func _ready() -> void:
 	_load_paths_data()  # Phase 1+3+4: after building load, exact pattern
 	_load_action_data()  # 100% data-driven actions
 	_load_endings_data()
+	_load_raid_data()
 	_load_or_init()
 	# Seed some starting flavor if brand new
 	if resources["shards"] <= 0.1 and phase == "dark":
@@ -187,6 +191,20 @@ func _load_endings_data() -> void:
 			return
 	ending_data = {}
 	push_warning("Failed to load endings.json")
+
+func _load_raid_data() -> void:
+	# R6: player-facing raid/defense encounter definitions (data-driven responses)
+	var file := FileAccess.open("res://data/raids.json", FileAccess.READ)
+	if file:
+		var parsed = JSON.parse_string(file.get_as_text())
+		file.close()
+		if typeof(parsed) == TYPE_DICTIONARY:
+			raid_data = parsed
+			print("[GameState] Loaded raid data: ", raid_data.keys())
+			return
+	raid_data = {}
+	print("[GameState] WARN: raids.json missing or invalid")
+
 func _process(delta: float) -> void:
 	if is_paused or time_scale <= 0.0:
 		return
@@ -1265,11 +1283,206 @@ func get_whisper_mult(resource: String, for_area: String = "") -> float:
 	return m
 
 func _trigger_path_raid() -> void:
-	# Deepened for Phase 4 TD-lite start. Defense_strength (built by Defend action, decays, +watch_spire) now provides real mitigation + partial losses.
-	# Reframes tie back to claims / early marks when paths have been opened. Emits signal for UI/sound reactions.
+	# R6: offer a player-facing encounter instead of silently auto-resolving.
+	# Random ticks skip if an encounter is already pending.
+	if game_ended:
+		return
+	if not pending_raid.is_empty():
+		return
+	offer_raid_encounter()
+
+func offer_raid_encounter(path_id: String = "") -> bool:
+	# Build pending encounter snapshot from raid_data + current defense. Returns true if offered.
+	if game_ended:
+		return false
+	if not pending_raid.is_empty():
+		return false
+	if raid_data.is_empty():
+		_load_raid_data()
+	var defn: Dictionary = raid_data.get("path_raid", {})
+	if defn.is_empty():
+		# Fallback: keep old auto-resolve behavior if data missing
+		_resolve_raid_auto()
+		return false
+	var pid: String = path_id
+	if pid == "" or (not path_claims.has(pid) and not discovered_paths.has(pid)):
+		# Prefer a claimed vein; else any discovered; else empty
+		pid = ""
+		for cpid in path_claims.keys():
+			if bool(path_claims.get(cpid, false)):
+				pid = str(cpid)
+				break
+		if pid == "" and discovered_paths.size() > 0:
+			pid = str(discovered_paths[0])
+	var foragers: int = int(assigned.get("forager", 0))
+	var watch: int = int(buildings.get("watch_spire", 0))
+	var time_since_defend: float = total_play_time - last_path_defense
+	var def_val: float = defense_strength + (watch * 1.8) + (1.5 if time_since_defend < 75.0 else 0.0)
+	pending_raid = {
+		"raid_id": "path_raid",
+		"path_id": pid,
+		"def_val": def_val,
+		"foragers": foragers,
+		"offered_at": total_play_time,
+		"title": str(defn.get("title", "Ash Along the Veins")),
+		"prompt": str(defn.get("prompt", "The ash moves along the old veins.")),
+		"options": defn.get("options", []).duplicate(true) if typeof(defn.get("options", [])) == TYPE_ARRAY else [],
+	}
+	_log("The ash moves along the old veins. The paths remember who marked them. Watchers await orders.", "warning")
+	GameEvents.raid_encounter_offered.emit("path_raid")
+	return true
+
+func get_pending_raid() -> Dictionary:
+	return pending_raid.duplicate(true)
+
+func has_pending_raid() -> bool:
+	return not pending_raid.is_empty()
+
+func resolve_raid_encounter(choice_id: String) -> Dictionary:
+	# Apply data-driven response, then resolve mitigation / losses. Clears pending_raid.
+	var result: Dictionary = {"ok": false, "mitigated": false, "pop_loss": 0, "choice_id": choice_id}
+	if pending_raid.is_empty():
+		return result
+	if game_ended:
+		pending_raid.clear()
+		return result
+	var snap: Dictionary = pending_raid.duplicate(true)
+	var raid_id: String = str(snap.get("raid_id", "path_raid"))
+	var def_val: float = float(snap.get("def_val", defense_strength))
+	var foragers: int = int(snap.get("foragers", assigned.get("forager", 0)))
+	var opt: Dictionary = {}
+	var opts = snap.get("options", [])
+	if typeof(opts) == TYPE_ARRAY:
+		for o in opts:
+			if str(o.get("id", "")) == choice_id:
+				opt = o
+				break
+	if opt.is_empty() and raid_data.has(raid_id):
+		var dopts = raid_data[raid_id].get("options", [])
+		if typeof(dopts) == TYPE_ARRAY:
+			for o in dopts:
+				if str(o.get("id", "")) == choice_id:
+					opt = o
+					break
+	if opt.is_empty():
+		_log("No clear order reaches the watchers.", "warning")
+		return result
+
+	# Pay cost (shards etc.)
+	var cost: Dictionary = opt.get("cost", {})
+	if typeof(cost) == TYPE_DICTIONARY:
+		for res_name in cost.keys():
+			var need: float = float(cost[res_name])
+			if float(resources.get(res_name, 0.0)) < need:
+				_log("Not enough " + str(res_name) + " to answer the raid that way.", "warning")
+				return result
+		for res_name in cost.keys():
+			var need2: float = float(cost[res_name])
+			resources[res_name] = float(resources.get(res_name, 0.0)) - need2
+			GameEvents.resource_changed.emit(str(res_name), resources[res_name], -need2)
+
+	var effects: Dictionary = opt.get("effects", {})
+	if typeof(effects) != TYPE_DICTIONARY:
+		effects = {}
+
+	# Apply pre-resolution effect modifiers
+	if effects.has("use_defense"):
+		var used: float = float(effects["use_defense"])
+		defense_strength = max(0.0, defense_strength - used)
+		def_val = max(0.0, def_val - used * 0.35)  # committed watch still helps this fight
+		last_path_defense = total_play_time
+	if effects.has("add_defense"):
+		defense_strength = min(12.0, defense_strength + float(effects["add_defense"]))
+	if effects.has("raid_retaliation_add"):
+		flags["raid_retaliation"] = float(flags.get("raid_retaliation", 0.0)) + float(effects["raid_retaliation_add"])
+	if effects.has("align_delta"):
+		set_alignment(alignment + float(effects["align_delta"]), "raid_" + choice_id)
+	if effects.has("log"):
+		_log(str(effects["log"]), str(effects.get("log_category", "story")))
+
+	var force_mitigated: bool = bool(effects.get("force_mitigated", false))
+	var force_loss: bool = bool(effects.get("force_loss", false))
+	var mit_bonus: float = float(effects.get("mitigation_bonus", 0.0))
+	var mit_pen: float = float(effects.get("mitigation_penalty", 0.0))
+	var effective_def: float = def_val + mit_bonus * 5.0 - mit_pen * 4.0
+
+	var mitigated: bool = false
+	var pop_loss: int = 0
+	if force_mitigated:
+		mitigated = true
+	elif force_loss:
+		mitigated = false
+	elif effective_def >= 2.5 or (effective_def > 0.8 and randf() < (effective_def / 5.0)):
+		mitigated = true
+	elif alignment > 0.2 and randf() < 0.5:
+		mitigated = true
+
+	if mitigated:
+		_log("The circle holds against the raid from the ash. For now.", "story")
+		if alignment > 0.0 and not force_mitigated:
+			set_alignment(alignment + 0.01, "defend_raid")
+		if effects.has("shards_on_mitigated"):
+			var gain: float = float(effects["shards_on_mitigated"])
+			resources["shards"] = float(resources.get("shards", 0.0)) + gain
+			GameEvents.resource_changed.emit("shards", resources["shards"], gain)
+	else:
+		pop_loss = 1
+		if population > 5:
+			pop_loss = 1 + int(min(3.0, float(population) / 8.0))
+		if effective_def > 0.5 and not force_loss:
+			pop_loss = int(max(1.0, float(pop_loss) * (1.0 - clamp(effective_def / 9.0, 0.0, 0.7))))
+		var loss_red: float = float(flags.get("loss_reduction", 0.0))
+		if loss_red > 0.0:
+			pop_loss = int(max(0.0, float(pop_loss) * (1.0 - min(0.6, loss_red))))
+		var retal: float = float(flags.get("raid_retaliation", 0.0))
+		if retal > 0.0:
+			pop_loss = int(pop_loss * (1.0 + min(0.8, retal * 2.0)))
+		if effects.has("pop_loss_bonus"):
+			pop_loss += int(effects["pop_loss_bonus"])
+		population = max(1, population - pop_loss) if population > 0 else 0
+		if population == 0 and pop_loss > 0:
+			population = 0
+		GameEvents.population_changed.emit(population, _get_free_pop(), -pop_loss)
+		var shard_loss: float = 4.0 + foragers * 0.8
+		resources["shards"] = max(0.0, float(resources.get("shards", 0.0)) - shard_loss)
+		GameEvents.resource_changed.emit("shards", resources["shards"], -shard_loss)
+		var rev: String = "The lost on the paths do not all return. Something in the ash took them."
+		if path_claims.size() > 0 or phase == "outlands":
+			rev = "Veins you claimed answer back. Not all who walked the lines return."
+			if early_choice != "" and NarrativeSystem and NarrativeSystem.has_method("get_choice_reframe"):
+				var r: String = NarrativeSystem.get_choice_reframe("raid_loss")
+				if r != "":
+					rev = r
+		if NarrativeSystem:
+			NarrativeSystem.trigger_revelation(rev)
+		else:
+			_log(rev, "revelation")
+		if pop_loss > 0:
+			add_memory("raid_loss", {"pop_loss": pop_loss, "def_val": effective_def, "choice_id": choice_id})
+
+	# Memory for the response itself (always)
+	var mem_key: String = str(effects.get("memory_key", "raid_response_" + choice_id))
+	add_memory(mem_key, {
+		"choice_id": choice_id,
+		"mitigated": mitigated,
+		"pop_loss": pop_loss,
+		"path_id": str(snap.get("path_id", "")),
+		"def_val": effective_def,
+	})
+
+	pending_raid.clear()
+	result["ok"] = true
+	result["mitigated"] = mitigated
+	result["pop_loss"] = pop_loss
+	GameEvents.raid_encounter_resolved.emit(raid_id, choice_id)
+	GameEvents.raid_occurred.emit(mitigated, pop_loss)
+	_check_ending_conditions("raid")
+	return result
+
+func _resolve_raid_auto() -> void:
+	# Legacy/fallback auto-resolve when raids.json missing (keeps headless/old paths safe).
 	_log("The ash moves along the old veins. The paths remember who marked them.", "warning")
 	var foragers: int = int(assigned.get("forager", 0))
-	var f_lines: int = int(buildings.get("foraging_lines", 0))
 	var watch: int = int(buildings.get("watch_spire", 0))
 	var time_since_defend: float = total_play_time - last_path_defense
 	var def_val: float = defense_strength + (watch * 1.8) + (1.5 if time_since_defend < 75.0 else 0.0)
@@ -1287,37 +1500,30 @@ func _trigger_path_raid() -> void:
 		pop_loss = 1
 		if population > 5:
 			pop_loss = 1 + int(min(3.0, float(population) / 8.0))
-		# Partial mitigation from residual defense
 		if def_val > 0.5:
 			pop_loss = int(max(1.0, float(pop_loss) * (1.0 - clamp(def_val / 9.0, 0.0, 0.7))))
-		# Faction production effects: sanctuary loss_reduction (from ward queue complete)
 		var loss_red: float = float(flags.get("loss_reduction", 0.0))
 		if loss_red > 0.0:
 			pop_loss = int(max(0.0, float(pop_loss) * (1.0 - min(0.6, loss_red))))
-		# Dread retaliation: higher losses when aggressive foundry completed (tradeoff for more defense)
 		var retal: float = float(flags.get("raid_retaliation", 0.0))
 		if retal > 0.0:
 			pop_loss = int(pop_loss * (1.0 + min(0.8, retal * 2.0)))
 		population = max(1, population - pop_loss)
 		GameEvents.population_changed.emit(population, _get_free_pop(), -pop_loss)
-		# Small resource bite too
 		var shard_loss: float = 4.0 + foragers * 0.8
 		resources["shards"] = max(0.0, resources["shards"] - shard_loss)
 		GameEvents.resource_changed.emit("shards", resources["shards"], -shard_loss)
 		var rev: String = "The lost on the paths do not all return. Something in the ash took them."
 		if path_claims.size() > 0 or phase == "outlands":
 			rev = "Veins you claimed answer back. Not all who walked the lines return."
-			if early_choice != "" and NarrativeSystem:
-				# Use existing reframe hook if a specific one exists; otherwise the claim-tied line stands as the gut reminder.
-				if NarrativeSystem.has_method("get_choice_reframe"):
-					var r: String = NarrativeSystem.get_choice_reframe("raid_loss")
-					if r != "":
-						rev = r
+			if early_choice != "" and NarrativeSystem and NarrativeSystem.has_method("get_choice_reframe"):
+				var r: String = NarrativeSystem.get_choice_reframe("raid_loss")
+				if r != "":
+					rev = r
 		if NarrativeSystem:
 			NarrativeSystem.trigger_revelation(rev)
 		else:
 			_log(rev, "revelation")
-		# Accelerated: Memory on raid loss (ties the visual threat on the map to the player's moral history)
 		if not mitigated and pop_loss > 0:
 			add_memory("raid_loss", {"pop_loss": pop_loss, "def_val": def_val})
 	GameEvents.raid_occurred.emit(mitigated, pop_loss)
@@ -1683,6 +1889,37 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 			base = "You demand more from a circle that learned to close. The ash answers both lessons."
 		else:
 			base = "You push them for more. The pulse takes what they give."
+	elif event_key == "raid_response_hold":
+		var held: bool = bool(extra.get("mitigated", true))
+		if choice == "shelter":
+			base = "You held the watch. The same mercy that opened the havens now stands on the veins" + (" — and holds." if held else " — and still the ash bit.")
+		elif choice == "demand":
+			base = "You held the watch with the firmness you first demanded. The Bound felt eyes on them" + ("." if held else ", yet not all returned.")
+		else:
+			base = "You ordered the watch to hold. Defense spent so the lines might endure."
+	elif event_key == "raid_response_shelter":
+		if choice == "shelter":
+			base = "You pulled them back. Shards spent so the Bound you once sheltered might live again."
+		elif choice == "demand":
+			base = "You pulled them back despite the demand that taught them to walk. The circle paid in shards."
+		else:
+			base = "You spent shards to pull walkers from the ash. The hearth took them in."
+	elif event_key == "raid_response_strike":
+		var sm: bool = bool(extra.get("mitigated", false))
+		if choice == "demand":
+			base = "You struck the ash as you once demanded work. The veins answered" + (" with silence and shards." if sm else " with blood and shards.")
+		elif choice == "shelter":
+			base = "You struck the ash though you once opened havens. Mercy and the fist share the same pulse now."
+		else:
+			base = "You ordered a strike. Retaliation hardens the circle" + ("." if sm else "; not all who struck returned.")
+	elif event_key == "raid_response_abandon":
+		var pl: int = int(extra.get("pop_loss", 0))
+		if choice == "seal":
+			base = "You abandoned the line. The circle that learned to seal also learned what to leave to the ash (" + str(pl) + ")."
+		elif choice == "shelter":
+			base = "You abandoned the line. Those you once sheltered were left to the veins (" + str(pl) + ")."
+		else:
+			base = "You abandoned the line to spare the hearth. The ash took " + str(pl) + " who walked."
 	elif event_key == "raid_loss":
 		var ploss: int = int(extra.get("pop_loss", 0))
 		if choice == "shelter":
@@ -2086,6 +2323,7 @@ func save_game(slot: String = "auto") -> void:
 		"ng_plus_run": ng_plus_run,
 		"memory_shard_active": memory_shard_active,
 		"memory_shard_last": memory_shard_last,
+		"pending_raid": pending_raid,
 		# path_data is always from data/paths.json on load, not persisted
 	}
 	var path: String = "user://save_%s.json" % slot
@@ -2138,6 +2376,8 @@ func load_game(slot: String = "auto") -> bool:
 	path_claims = data.get("path_claims", path_claims)
 	last_path_defense = data.get("last_path_defense", last_path_defense)
 	defense_strength = float(data.get("defense_strength", defense_strength))
+	var _pr = data.get("pending_raid", {})
+	pending_raid = _pr if typeof(_pr) == TYPE_DICTIONARY else {}
 	# Polish: restore choice memory so reframes survive reload/offline
 	early_choice = data.get("early_choice", early_choice)
 	choice_history.clear()
@@ -2204,6 +2444,7 @@ func reset_to_new_game() -> void:
 	path_claims = {}
 	last_path_defense = 0.0
 	defense_strength = 0.0
+	pending_raid.clear()
 	production_queue.clear()
 	memory_entries.clear()
 	labor_boost = 0.0
