@@ -1166,6 +1166,135 @@ func _run_tests() -> void:
 	else:
 		_fail("cross-round data missing after R8")
 
+	# --- R9 Raid auto-timeout (watchers act without orders) ---
+	print("Simulating raid auto-timeout...")
+	var rd9: Dictionary = _load_json("res://data/raids.json")
+	var pr9: Dictionary = rd9.get("path_raid", {})
+	if float(pr9.get("timeout_sec", 0.0)) > 0.0 and str(pr9.get("timeout_choice", "")) == "hold_watch":
+		_ok("path_raid timeout_sec=%.0f choice=%s" % [float(pr9.get("timeout_sec", 0.0)), str(pr9.get("timeout_choice", ""))])
+	else:
+		_fail("path_raid missing timeout fields: " + str(pr9.keys()))
+	if not gs.has_method("tick_pending_raid_timeout") or not gs.has_method("timeout_pending_raid") or not gs.has_method("get_raid_timeout_remaining"):
+		_fail("raid timeout methods missing")
+	else:
+		_ok("raid timeout methods present")
+
+	gs.pending_raid.clear()
+	gs.game_ended = false
+	gs.phase = "outlands"
+	gs.population = 8
+	gs.resources["shards"] = 40.0
+	gs.defense_strength = 4.0
+	gs.buildings = {"watch_spire": 1}
+	gs.assigned = {"forager": 1}
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.discovered_paths.clear()
+	gs.discovered_paths.append("vein_of_fading_echoes")
+	gs.lane_combat_credit = 0.0
+	gs.memory_entries.clear()
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("R9 offer_raid_encounter failed")
+	else:
+		var pend9: Dictionary = gs.get_pending_raid()
+		if float(pend9.get("timeout_sec", 0.0)) > 0.0 and str(pend9.get("timeout_choice", "")) == "hold_watch":
+			_ok("pending stamps timeout_sec + timeout_choice")
+		else:
+			_fail("pending missing timeout stamp: " + str(pend9.keys()))
+		var rem_before: float = gs.get_raid_timeout_remaining()
+		gs.tick_pending_raid_timeout(0.5)
+		if gs.has_pending_raid() and gs.get_raid_timeout_remaining() < rem_before and gs.get_raid_timeout_remaining() > 0.0:
+			_ok("early tick reduces remaining but does not fire")
+		else:
+			_fail("early tick unexpected rem_before=%.2f rem=%.2f pending=%s" % [rem_before, gs.get_raid_timeout_remaining(), str(gs.has_pending_raid())])
+		var tsec: float = float(gs.pending_raid.get("timeout_sec", 30.0))
+		# Drain remaining real-delta so watchers auto-hold
+		gs.tick_pending_raid_timeout(tsec + 1.0)
+		if not gs.has_pending_raid():
+			_ok("real-delta timeout cleared pending via hold_watch")
+		else:
+			_fail("real-delta timeout left pending rem=%.2f" % gs.get_raid_timeout_remaining())
+		var mem_hold_to: bool = false
+		for e in gs.memory_entries:
+			if str(e.get("key", "")) == "raid_response_hold":
+				mem_hold_to = true
+				break
+		if mem_hold_to:
+			_ok("timeout used hold_watch memory")
+		else:
+			_fail("timeout missing raid_response_hold memory")
+
+	# Game-time path (bump play time + tick; hearth phase avoids same-tick re-offer)
+	gs.pending_raid.clear()
+	gs.memory_entries.clear()
+	gs.game_ended = false
+	gs.phase = "hearth"
+	gs.population = 8
+	gs.resources["shards"] = 40.0
+	gs.defense_strength = 4.0
+	gs.buildings = {"watch_spire": 1}
+	gs.lane_combat_credit = 0.0
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("R9 game-time offer failed")
+	else:
+		var tsec2: float = float(gs.pending_raid.get("timeout_sec", 30.0))
+		var offered_at2: float = float(gs.pending_raid.get("offered_at", gs.total_play_time))
+		# Early game-time tick should not fire
+		gs.total_play_time = offered_at2 + 1.0
+		gs.tick_pending_raid_timeout(0.0)
+		if gs.has_pending_raid() and abs(gs.get_raid_timeout_remaining() - (tsec2 - 1.0)) < 0.05:
+			_ok("game-time early tick keeps pending")
+		else:
+			_fail("game-time early unexpected rem=%.2f pending=%s" % [gs.get_raid_timeout_remaining(), str(gs.has_pending_raid())])
+		gs.total_play_time = offered_at2 + tsec2 + 1.0
+		gs.tick_pending_raid_timeout(0.0)
+		if not gs.has_pending_raid():
+			_ok("game-time timeout clears pending")
+		else:
+			_fail("game-time timeout left pending rem=%.2f" % gs.get_raid_timeout_remaining())
+		# Also exercise advance_time hook (no random re-offer in hearth)
+		gs.pending_raid.clear()
+		gs.memory_entries.clear()
+		gs.game_ended = false
+		gs.defense_strength = 4.0
+		if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+			_fail("R9 advance_time offer failed")
+		else:
+			gs.advance_time(tsec2 + 1.0)
+			if not gs.has_pending_raid():
+				_ok("advance_time game-time timeout clears pending")
+			else:
+				_fail("advance_time timeout left pending rem=%.2f" % gs.get_raid_timeout_remaining())
+		var mem_hold_gt: bool = false
+		for e2 in gs.memory_entries:
+			if str(e2.get("key", "")) == "raid_response_hold":
+				mem_hold_gt = true
+				break
+		if mem_hold_gt:
+			_ok("game-time timeout used hold_watch memory")
+		else:
+			_fail("game-time timeout missing raid_response_hold")
+
+	# Explicit timeout_pending_raid API
+	gs.pending_raid.clear()
+	gs.memory_entries.clear()
+	gs.game_ended = false
+	gs.phase = "hearth"
+	gs.defense_strength = 4.0
+	gs.resources["shards"] = 40.0
+	if gs.offer_raid_encounter("vein_of_fading_echoes"):
+		var explicit: Dictionary = gs.timeout_pending_raid()
+		if bool(explicit.get("ok", false)) and bool(explicit.get("timed_out", false)) and not gs.has_pending_raid():
+			_ok("timeout_pending_raid resolves + marks timed_out")
+		else:
+			_fail("timeout_pending_raid failed: " + str(explicit))
+	else:
+		_fail("offer for explicit timeout failed")
+
+	if rd9.has("path_raid") and td8.has("ward_pulse") and ed8.has("true_echo"):
+		_ok("R6/R7/R8/R9 data intact together")
+	else:
+		_fail("cross-round data missing after R9")
+
 	_finish()
 
 

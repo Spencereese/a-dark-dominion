@@ -1,8 +1,10 @@
-﻿{
+{
   "path_raid": {
     "id": "path_raid",
     "title": "Ash Along the Veins",
     "prompt": "The ash moves along the old veins. Watchers call for orders. The Bound on the lines wait on your will.",
+    "timeout_sec": 30.0,
+    "timeout_choice": "hold_watch",
     "options": [
       {
         "id": "hold_watch",

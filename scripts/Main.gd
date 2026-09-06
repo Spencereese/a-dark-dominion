@@ -1,4 +1,4 @@
-# scripts/Main.gd
+﻿# scripts/Main.gd
 # Main controller for the prototype UI. Builds most of the early-game interface in code
 # so it is easy to iterate rapidly with AI assistance.
 # Later phases can introduce more instanced scenes and a visual map.
@@ -29,6 +29,7 @@ var choice_prompt_content: VBoxContainer = null
 # R6 raid/defense encounter UI (mirrors choice prompt pattern)
 var raid_encounter_panel: PanelContainer = null
 var raid_encounter_content: VBoxContainer = null
+var _raid_timeout_label: Label = null
 var _raid_time_was_paused_by_prompt: bool = false
 var _choice_time_was_paused_by_prompt: bool = false
 
@@ -91,7 +92,7 @@ func _ready() -> void:
 	_setup_placeholder_art()  # load ash bg + pulsing ember visual from assets/art (placeholders)
 	_setup_audio()  # sparse placeholder tones + buses; hooks via signals for nurture/gather/raid/choice
 
-	# Initial welcome if needed (GameState already logged some) Ã¢â‚¬â€ polished to ash/ember (no room/fire remnant)
+	# Initial welcome if needed (GameState already logged some) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â polished to ash/ember (no room/fire remnant)
 	if log_label.get_parsed_text().strip_edges() == "":
 		var txt: String = "The ash is vast and silent. Embers lie scattered like forgotten sparks."
 		if NarrativeSystem:
@@ -616,7 +617,7 @@ func _refresh_resources_display() -> void:
 		child.queue_free()
 
 	# At the absolute start (complete darkness, no awareness yet): hide all numbers, resources, pop counts.
-	# This keeps the mystery Ã¢â‚¬â€ the player doesn't yet "know" there are shards, rates, or "the lost".
+	# This keeps the mystery ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the player doesn't yet "know" there are shards, rates, or "the lost".
 	# The first Nurture action will advance phase, after which the systems reveal gradually.
 	if GameState.phase == "dark" and GameState.population == 0 and GameState.resources.get("shards", 0.0) < 0.5:
 		var vague: Label = Label.new()
@@ -915,6 +916,25 @@ func _on_raid_encounter_resolved(_raid_id: String, _choice_id: String) -> void:
 	_refresh_memories()
 	_refresh_map()
 
+func _process(_delta: float) -> void:
+	# R9: refresh timeout countdown while encounter panel is open (sim may be paused)
+	if raid_encounter_panel and is_instance_valid(raid_encounter_panel) and raid_encounter_panel.visible:
+		_update_raid_timeout_label()
+
+func _update_raid_timeout_label() -> void:
+	if _raid_timeout_label == null or not is_instance_valid(_raid_timeout_label):
+		return
+	if not GameState or not GameState.has_method("get_raid_timeout_remaining"):
+		_raid_timeout_label.text = ""
+		return
+	if not GameState.has_pending_raid():
+		_raid_timeout_label.text = ""
+		return
+	var rem: float = GameState.get_raid_timeout_remaining()
+	_raid_timeout_label.text = "Watchers wait %.0fs before holding the line alone." % rem
+	_raid_timeout_label.add_theme_font_size_override("font_size", 9)
+	_raid_timeout_label.add_theme_color_override("font_color", Color(0.75, 0.55, 0.4))
+
 func _show_raid_encounter() -> void:
 	if not GameState or not GameState.has_method("has_pending_raid"):
 		return
@@ -926,6 +946,7 @@ func _show_raid_encounter() -> void:
 		return
 	for c in raid_encounter_content.get_children():
 		c.queue_free()
+	_raid_timeout_label = null
 	var pending: Dictionary = GameState.get_pending_raid()
 	var header: Label = Label.new()
 	header.text = str(pending.get("title", "Ash Along the Veins"))
@@ -944,6 +965,10 @@ func _show_raid_encounter() -> void:
 	def_lbl.add_theme_font_size_override("font_size", 10)
 	def_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
 	raid_encounter_content.add_child(def_lbl)
+	_raid_timeout_label = Label.new()
+	_raid_timeout_label.name = "RaidTimeoutLabel"
+	_update_raid_timeout_label()
+	raid_encounter_content.add_child(_raid_timeout_label)
 	var opts = pending.get("options", [])
 	var vbox: VBoxContainer = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 3)
@@ -987,6 +1012,7 @@ func _on_raid_response_selected(choice_id: String) -> void:
 func _hide_raid_encounter() -> void:
 	if raid_encounter_panel and is_instance_valid(raid_encounter_panel):
 		raid_encounter_panel.hide()
+	_raid_timeout_label = null
 	if _raid_time_was_paused_by_prompt and GameState and GameState.is_paused:
 		GameState.set_time_scale(1.0)
 		_raid_time_was_paused_by_prompt = false
@@ -1402,7 +1428,7 @@ func _on_map_dispatch_requested(path_id: String, choice: String) -> void:
 	_refresh_map()
 
 func _on_map_moral_choice_offered(path_id: String, options: Array) -> void:
-	# Map click offered moral choices Ã¢â‚¬â€ do NOT auto-pick. Show clickable buttons in the map panel.
+	# Map click offered moral choices ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â do NOT auto-pick. Show clickable buttons in the map panel.
 	GameEvents.log_message.emit("The ash waits on the " + path_id.replace("_", " ") + ". Choose how they walk it.", "story")
 	_show_map_path_choices(path_id, options)
 	_refresh_outlands()
@@ -1821,7 +1847,7 @@ func _ensure_whisper_banner() -> void:
 
 	# Close button for popup control (right aligned simple)
 	var close: Button = Button.new()
-	close.text = "Ãƒâ€”"
+	close.text = "ÃƒÆ’Ã¢â‚¬â€"
 	close.custom_minimum_size = Vector2(22, 18)
 	close.add_theme_font_size_override("font_size", 11)
 	close.pressed.connect(_hide_whisper_banner)
@@ -2018,3 +2044,4 @@ func _on_ending_restart_pressed() -> void:
 	_refresh_choice_prompt()
 	_update_status()
 	_update_ember_visual()
+

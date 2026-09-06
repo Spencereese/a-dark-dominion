@@ -232,6 +232,10 @@ func _load_tower_data() -> void:
 
 
 func _process(delta: float) -> void:
+	# R9: raid encounter UI pauses game time; still accumulate real-delta timeout
+	if not pending_raid.is_empty():
+		tick_pending_raid_timeout(delta)
+
 	if is_paused or time_scale <= 0.0:
 		return
 
@@ -306,6 +310,10 @@ func advance_time(seconds: float) -> void:
 
 	# Polish: dedicated early choice hook so the first real gut-punch can trigger cleanly at pop/haven threshold
 	_check_early_choice_events()
+
+	# R9: game-time raid auto-timeout (headless / unpaused sim)
+	if not pending_raid.is_empty():
+		tick_pending_raid_timeout(0.0)
 
 	# Periodic path raid tease if outlands (scaled by foragers/foraging_lines/align, basic stub)
 	if phase == "outlands" and population > 0:
@@ -1345,6 +1353,10 @@ func offer_raid_encounter(path_id: String = "") -> bool:
 	var time_since_defend: float = total_play_time - last_path_defense
 	var lane_bonus: float = get_lane_combat_bonus()
 	var def_val: float = defense_strength + (watch * 1.8) + (1.5 if time_since_defend < 75.0 else 0.0) + lane_bonus
+	var timeout_sec: float = float(defn.get("timeout_sec", 30.0))
+	var timeout_choice: String = str(defn.get("timeout_choice", "hold_watch"))
+	if timeout_choice == "":
+		timeout_choice = "hold_watch"
 	pending_raid = {
 		"raid_id": "path_raid",
 		"path_id": pid,
@@ -1352,6 +1364,9 @@ func offer_raid_encounter(path_id: String = "") -> bool:
 		"lane_bonus": lane_bonus,
 		"foragers": foragers,
 		"offered_at": total_play_time,
+		"timeout_sec": timeout_sec,
+		"timeout_choice": timeout_choice,
+		"timeout_elapsed": 0.0,
 		"title": str(defn.get("title", "Ash Along the Veins")),
 		"prompt": str(defn.get("prompt", "The ash moves along the old veins.")),
 		"options": defn.get("options", []).duplicate(true) if typeof(defn.get("options", [])) == TYPE_ARRAY else [],
@@ -1365,6 +1380,44 @@ func get_pending_raid() -> Dictionary:
 
 func has_pending_raid() -> bool:
 	return not pending_raid.is_empty()
+
+func get_raid_timeout_remaining() -> float:
+	# Seconds until watchers auto-resolve (0 if none / already due).
+	if pending_raid.is_empty():
+		return 0.0
+	var timeout_sec: float = float(pending_raid.get("timeout_sec", 0.0))
+	if timeout_sec <= 0.0:
+		return 0.0
+	var real_elapsed: float = float(pending_raid.get("timeout_elapsed", 0.0))
+	var game_elapsed: float = total_play_time - float(pending_raid.get("offered_at", total_play_time))
+	var used: float = max(real_elapsed, max(0.0, game_elapsed))
+	return max(0.0, timeout_sec - used)
+
+func tick_pending_raid_timeout(real_delta: float) -> void:
+	# Accumulate wall-clock wait (works while paused) and honor game-time elapsed.
+	if pending_raid.is_empty() or game_ended:
+		return
+	var timeout_sec: float = float(pending_raid.get("timeout_sec", 0.0))
+	if timeout_sec <= 0.0:
+		return
+	if real_delta > 0.0:
+		pending_raid["timeout_elapsed"] = float(pending_raid.get("timeout_elapsed", 0.0)) + real_delta
+	var real_elapsed: float = float(pending_raid.get("timeout_elapsed", 0.0))
+	var game_elapsed: float = total_play_time - float(pending_raid.get("offered_at", total_play_time))
+	if real_elapsed >= timeout_sec or game_elapsed >= timeout_sec:
+		timeout_pending_raid()
+
+func timeout_pending_raid() -> Dictionary:
+	# Watchers act without orders using data-driven timeout_choice (default hold_watch).
+	if pending_raid.is_empty():
+		return {"ok": false, "timed_out": false}
+	var choice_id: String = str(pending_raid.get("timeout_choice", "hold_watch"))
+	if choice_id == "":
+		choice_id = "hold_watch"
+	_log("No order reaches the watchers in time. They hold the line as they know how.", "warning")
+	var res: Dictionary = resolve_raid_encounter(choice_id)
+	res["timed_out"] = true
+	return res
 
 func resolve_raid_encounter(choice_id: String) -> Dictionary:
 	# Apply data-driven response, then resolve mitigation / losses. Clears pending_raid.
