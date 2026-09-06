@@ -65,6 +65,11 @@ var tower_data: Dictionary = {}  # loaded from data/towers.json
 var lane_combat_hits: int = 0  # lifetime hits this run (schematic TD)
 var lane_combat_credit: float = 0.0  # spends into next raid def_val; capped
 var lane_combat_repels: int = 0  # raids fully pushed off a vein by towers
+# R10 multi-outpost logistics (claimed veins stockpile locally; convoys travel / ash-tax)
+var logistics_data: Dictionary = {}  # loaded from data/logistics.json
+var outpost_stockpiles: Dictionary = {}  # path_id -> {shards, resonance, vitalis}
+var active_convoys: Array = []  # [{id, path_id, cargo, eta, travel}]
+var convoy_seq: int = 0
 
 # Production queues labor (C&C flavor per approved plan): labor from completed halls auto/boost assigned to defense/expeditions (like foragers but from production)
 var production_labor: float = 0.0
@@ -129,6 +134,7 @@ func _ready() -> void:
 	_load_endings_data()
 	_load_raid_data()
 	_load_tower_data()
+	_load_logistics_data()
 	_load_or_init()
 	# Seed some starting flavor if brand new
 	if resources["shards"] <= 0.1 and phase == "dark":
@@ -231,6 +237,27 @@ func _load_tower_data() -> void:
 		tower_data = {}
 
 
+func _load_logistics_data() -> void:
+	# R10: outpost stockpile + convoy knobs (claimed veins no longer pour straight into hearth rates)
+	var path := "res://data/logistics.json"
+	if not FileAccess.file_exists(path):
+		logistics_data = {}
+		print("[GameState] WARN: logistics.json missing")
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if not file:
+		logistics_data = {}
+		return
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if typeof(parsed) == TYPE_DICTIONARY:
+		logistics_data = parsed
+		print("[GameState] Loaded logistics data: ", logistics_data.keys())
+	else:
+		logistics_data = {}
+		print("[GameState] WARN: logistics.json invalid")
+
+
 func _process(delta: float) -> void:
 	# R9: raid encounter UI pauses game time; still accumulate real-delta timeout
 	if not pending_raid.is_empty():
@@ -307,6 +334,9 @@ func advance_time(seconds: float) -> void:
 	# Production labor from queues (labor_hall etc): auto boost to defense over time (C&C "workers on the walls"), using assigned or total
 	# (expands prior simple labor_boost; assigned like foragers but for production output; unassigned still contributes base)
 	_apply_production_labor_boosts(seconds)
+
+	# R10: claimed outposts stockpile locally, auto-dispatch / resolve supply convoys
+	_tick_outpost_logistics(seconds)
 
 	# Polish: dedicated early choice hook so the first real gut-punch can trigger cleanly at pop/haven threshold
 	_check_early_choice_events()
@@ -964,16 +994,8 @@ func _recalculate_rates() -> void:
 		for r in brates:
 			rates[r] = rates.get(r, 0.0) + float(brates[r]) * count
 
-	# Passive rates from claimed paths/veins (explicit implementation of prior TODO, simple + within MVP scope per subagent brief).
-	# Gives expansion "Weight" a mechanical reward (small ongoing trickle), tying claimed outlands back into economy without new data fields.
-	# Recalced on claim (in _resolve_one) and on load/assigns.
-	var claimed_count: int = 0
-	for k in path_claims:
-		if path_claims[k]:
-			claimed_count += 1
-	if claimed_count > 0:
-		rates["resonance"] = rates.get("resonance", 0.0) + 0.04 * claimed_count
-		rates["vitalis"] = rates.get("vitalis", 0.0) + 0.02 * claimed_count
+	# R10: claimed veins no longer add direct hearth rates — production stockpiles at outposts
+	# and arrives via supply convoys (see _tick_outpost_logistics / dispatch_convoy).
 
 	# Production labor boosts (from queues/labor_hall etc): global trickle + assigned directed (update _recalculate when assign/complete)
 	if production_labor > 0.0:
@@ -2165,6 +2187,32 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 			base = "Tower fire drove the ash fully off " + repel_path + " (" + str(hits_n) + " hits). What the circle sealed, the bolts kept."
 		else:
 			base = "Tower fire drove the ash fully off " + repel_path + " (" + str(hits_n) + " hits). The lane combat credit now hardens the watch."
+	elif event_key == "logistics_first_convoy":
+		var cpath: String = str(extra.get("path_id", "a vein"))
+		if path_data.has(cpath):
+			cpath = str(path_data[cpath].get("name", cpath))
+		var ctot: String = "%.1f" % float(extra.get("total", 0.0))
+		if choice == "shelter":
+			base = "You called the first supply line from " + cpath + " (" + ctot + "). What you once sheltered must now travel the ash to reach the hearth."
+		elif choice == "demand":
+			base = "You called the first supply line from " + cpath + " (" + ctot + "). The demand that taught them to walk now teaches the ash to carry."
+		elif choice == "seal":
+			base = "You called the first supply line from " + cpath + " (" + ctot + "). The circle that learned to close now pulls what it claimed home."
+		else:
+			base = "You called the first supply line from " + cpath + " (" + ctot + "). Bound veins no longer pour free — the ash taxes every step."
+	elif event_key == "logistics_convoy_loss":
+		var lpath: String = str(extra.get("path_id", "a vein"))
+		if path_data.has(lpath):
+			lpath = str(path_data[lpath].get("name", lpath))
+		var lost_amt: String = "%.1f" % float(extra.get("lost_total", 0.0))
+		if choice == "shelter":
+			base = "A supply line from " + lpath + " was bitten by the ash (lost " + lost_amt + "). Mercy at the havens does not spare the road."
+		elif choice == "demand":
+			base = "A supply line from " + lpath + " was bitten by the ash (lost " + lost_amt + "). The will you demanded still pays the tax of travel."
+		elif choice == "seal":
+			base = "A supply line from " + lpath + " was bitten by the ash (lost " + lost_amt + "). What the circle sealed, the ash still skims."
+		else:
+			base = "A supply line from " + lpath + " was bitten by the ash (lost " + lost_amt + "). Not all that leaves a vein arrives at the hearth."
 
 	if base == "":
 		return  # unknown key: do not spam empty entries
@@ -2540,7 +2588,10 @@ func save_game(slot: String = "auto") -> void:
 		"lane_combat_hits": lane_combat_hits,
 		"lane_combat_credit": lane_combat_credit,
 		"lane_combat_repels": lane_combat_repels,
-		# path_data is always from data/paths.json on load, not persisted
+		"outpost_stockpiles": outpost_stockpiles,
+		"active_convoys": active_convoys,
+		"convoy_seq": convoy_seq,
+		# path_data / logistics_data always from data/*.json on load, not persisted
 	}
 	var path: String = "user://save_%s.json" % slot
 	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
@@ -2597,6 +2648,24 @@ func load_game(slot: String = "auto") -> bool:
 	lane_combat_hits = int(data.get("lane_combat_hits", 0))
 	lane_combat_credit = float(data.get("lane_combat_credit", 0.0))
 	lane_combat_repels = int(data.get("lane_combat_repels", 0))
+	outpost_stockpiles.clear()
+	var _osp = data.get("outpost_stockpiles", {})
+	if typeof(_osp) == TYPE_DICTIONARY:
+		for k in _osp:
+			var pile = _osp[k]
+			if typeof(pile) == TYPE_DICTIONARY:
+				outpost_stockpiles[str(k)] = {
+					"shards": float(pile.get("shards", 0.0)),
+					"resonance": float(pile.get("resonance", 0.0)),
+					"vitalis": float(pile.get("vitalis", 0.0)),
+				}
+	active_convoys.clear()
+	var _acv: Array = data.get("active_convoys", [])
+	if _acv is Array:
+		for item in _acv:
+			if typeof(item) == TYPE_DICTIONARY:
+				active_convoys.append(item)
+	convoy_seq = int(data.get("convoy_seq", 0))
 	# Polish: restore choice memory so reframes survive reload/offline
 	early_choice = data.get("early_choice", early_choice)
 	choice_history.clear()
@@ -2650,6 +2719,9 @@ func load_game(slot: String = "auto") -> bool:
 	# Accelerated: catch up production queues on load/offline
 	if not production_queue.is_empty():
 		advance_production(0.0)
+	# R10: resolve supply convoys that arrived during offline
+	if not active_convoys.is_empty():
+		_resolve_convoys()
 	return true
 
 func reset_to_new_game() -> void:
@@ -2667,6 +2739,9 @@ func reset_to_new_game() -> void:
 	lane_combat_hits = 0
 	lane_combat_credit = 0.0
 	lane_combat_repels = 0
+	outpost_stockpiles.clear()
+	active_convoys.clear()
+	convoy_seq = 0
 	production_queue.clear()
 	memory_entries.clear()
 	labor_boost = 0.0
@@ -2689,6 +2764,214 @@ func reset_to_new_game() -> void:
 	# Re-init (will call _load_paths_data + _load_or_init fresh)
 	_ready()
 
+
+
+# === R10 Multi-outpost logistics (stockpiles + supply convoys) ===
+
+func _ensure_stockpile(path_id: String) -> Dictionary:
+	if not outpost_stockpiles.has(path_id) or typeof(outpost_stockpiles[path_id]) != TYPE_DICTIONARY:
+		outpost_stockpiles[path_id] = {"shards": 0.0, "resonance": 0.0, "vitalis": 0.0}
+	var pile: Dictionary = outpost_stockpiles[path_id]
+	for r in ["shards", "resonance", "vitalis"]:
+		if not pile.has(r):
+			pile[r] = 0.0
+	outpost_stockpiles[path_id] = pile
+	return pile
+
+
+func get_outpost_stockpile(path_id: String) -> Dictionary:
+	return _ensure_stockpile(path_id).duplicate()
+
+
+func get_stockpile_total(path_id: String) -> float:
+	return _stockpile_total(_ensure_stockpile(path_id))
+
+
+func _stockpile_total(pile: Dictionary) -> float:
+	var t: float = 0.0
+	for r in ["shards", "resonance", "vitalis"]:
+		t += float(pile.get(r, 0.0))
+	return t
+
+
+func get_active_convoys_for(path_id: String) -> Array:
+	var out: Array = []
+	for c in active_convoys:
+		if str(c.get("path_id", "")) == path_id:
+			out.append(c)
+	return out
+
+
+func get_convoy_eta_remaining(path_id: String) -> float:
+	var best: float = -1.0
+	for c in active_convoys:
+		if str(c.get("path_id", "")) != path_id:
+			continue
+		var rem: float = max(0.0, float(c.get("eta", 0.0)) - total_play_time)
+		if best < 0.0 or rem < best:
+			best = rem
+	return best
+
+
+func _tick_outpost_logistics(seconds: float) -> void:
+	if seconds <= 0.0:
+		_resolve_convoys()
+		return
+	if logistics_data.is_empty():
+		_load_logistics_data()
+	if logistics_data.is_empty():
+		return
+	var rates_op: Dictionary = logistics_data.get("outpost_rates", {})
+	if typeof(rates_op) != TYPE_DICTIONARY:
+		rates_op = {}
+	var cap: float = float(logistics_data.get("stockpile_cap", 48.0))
+	for pid in path_claims.keys():
+		if not bool(path_claims.get(pid, false)):
+			continue
+		var pile: Dictionary = _ensure_stockpile(str(pid))
+		var total_now: float = _stockpile_total(pile)
+		if total_now >= cap:
+			continue
+		for res in rates_op.keys():
+			var room: float = cap - _stockpile_total(pile)
+			if room <= 0.0:
+				break
+			var add: float = float(rates_op[res]) * seconds
+			if add <= 0.0:
+				continue
+			add = min(add, room)
+			pile[str(res)] = float(pile.get(str(res), 0.0)) + add
+		outpost_stockpiles[str(pid)] = pile
+	_try_auto_dispatch_convoys()
+	_resolve_convoys()
+
+
+func _try_auto_dispatch_convoys() -> void:
+	if logistics_data.is_empty():
+		return
+	var thresh: float = float(logistics_data.get("auto_dispatch_threshold", 8.0))
+	var min_d: float = float(logistics_data.get("min_dispatch_total", 2.0))
+	for pid in path_claims.keys():
+		if not bool(path_claims.get(pid, false)):
+			continue
+		var total: float = get_stockpile_total(str(pid))
+		if total >= thresh and total >= min_d:
+			dispatch_convoy(str(pid), true)
+
+
+func dispatch_convoy(path_id: String, from_auto: bool = false) -> bool:
+	if logistics_data.is_empty():
+		_load_logistics_data()
+	if not bool(path_claims.get(path_id, false)):
+		if not from_auto:
+			_log("No bound outpost there to call a supply line from.", "warning")
+		return false
+	var pile: Dictionary = _ensure_stockpile(path_id)
+	var total: float = _stockpile_total(pile)
+	var min_d: float = float(logistics_data.get("min_dispatch_total", 2.0))
+	if total < min_d:
+		if not from_auto:
+			_log("The stockpile is too thin to send a supply line.", "warning")
+		return false
+	var cargo: Dictionary = {
+		"shards": float(pile.get("shards", 0.0)),
+		"resonance": float(pile.get("resonance", 0.0)),
+		"vitalis": float(pile.get("vitalis", 0.0)),
+	}
+	outpost_stockpiles[path_id] = {"shards": 0.0, "resonance": 0.0, "vitalis": 0.0}
+	var travel_base: float = 10.0
+	if path_data.has(path_id):
+		travel_base = float(path_data[path_id].get("travel_time", travel_base))
+	var travel: float = travel_base * float(logistics_data.get("convoy_travel_mult", 1.0))
+	convoy_seq += 1
+	var convoy: Dictionary = {
+		"id": "convoy_%d" % convoy_seq,
+		"path_id": path_id,
+		"cargo": cargo,
+		"eta": total_play_time + travel,
+		"travel": travel,
+		"auto": from_auto,
+	}
+	active_convoys.append(convoy)
+	var pname: String = path_id
+	if path_data.has(path_id):
+		pname = str(path_data[path_id].get("name", path_id))
+	if from_auto:
+		_log("A supply line leaves %s on its own (%.1f). The ash waits on the road." % [pname, total], "story")
+	else:
+		_log("You call a supply line from %s (%.1f). The lost walk it home." % [pname, total], "story")
+	add_memory("logistics_first_convoy", {"path_id": path_id, "total": total, "auto": from_auto})
+	GameEvents.available_actions_changed.emit()
+	return true
+
+
+func get_convoy_loss_chance(path_id: String = "") -> float:
+	if logistics_data.is_empty():
+		_load_logistics_data()
+	var chance: float = float(logistics_data.get("base_loss_chance", 0.18))
+	var watch_n: int = int(buildings.get("watch_spire", 0))
+	chance -= float(watch_n) * float(logistics_data.get("watch_loss_reduction", 0.04))
+	var def_val: float = defense_strength
+	if path_id != "" and has_method("get_vein_defense_strength"):
+		def_val = max(def_val, get_vein_defense_strength(path_id))
+	chance -= def_val * float(logistics_data.get("defense_loss_reduction", 0.015))
+	if alignment <= -0.5:
+		chance += float(logistics_data.get("tyrant_extra_loss", 0.08))
+	elif alignment >= 0.5:
+		chance -= float(logistics_data.get("benevolent_loss_reduction", 0.05))
+	return clampf(chance, 0.0, 0.85)
+
+
+func _resolve_convoys() -> void:
+	if active_convoys.is_empty():
+		return
+	var remaining: Array = []
+	for c in active_convoys:
+		if typeof(c) != TYPE_DICTIONARY:
+			continue
+		if total_play_time >= float(c.get("eta", 0.0)):
+			_deliver_convoy(c)
+		else:
+			remaining.append(c)
+	active_convoys = remaining
+
+
+func _deliver_convoy(convoy: Dictionary) -> void:
+	var path_id: String = str(convoy.get("path_id", ""))
+	var cargo: Dictionary = convoy.get("cargo", {})
+	if typeof(cargo) != TYPE_DICTIONARY:
+		cargo = {}
+	var sent_total: float = 0.0
+	for r in cargo.keys():
+		sent_total += float(cargo[r])
+	var loss_chance: float = get_convoy_loss_chance(path_id)
+	var lost: bool = randf() < loss_chance
+	var deliver_frac: float = 1.0
+	if lost:
+		var partial: float = float(logistics_data.get("partial_loss_fraction", 0.55))
+		var floor_f: float = float(logistics_data.get("min_deliver_fraction", 0.35))
+		deliver_frac = max(floor_f, partial)
+	var delivered_total: float = 0.0
+	for r in ["shards", "resonance", "vitalis"]:
+		var amt: float = float(cargo.get(r, 0.0)) * deliver_frac
+		if amt <= 0.0:
+			continue
+		resources[r] = float(resources.get(r, 0.0)) + amt
+		delivered_total += amt
+		GameEvents.resource_changed.emit(r, resources[r], amt)
+	var pname: String = path_id
+	if path_data.has(path_id):
+		pname = str(path_data[path_id].get("name", path_id))
+	if lost:
+		var lost_total: float = max(0.0, sent_total - delivered_total)
+		_log("The supply line from %s arrives light. The ash took %.1f; %.1f reaches the hearth." % [pname, lost_total, delivered_total], "warning")
+		add_memory("logistics_convoy_loss", {"path_id": path_id, "lost_total": lost_total, "delivered": delivered_total})
+	else:
+		_log("A supply line from %s reaches the hearth intact (%.1f)." % [pname, delivered_total], "story")
+	GameEvents.available_actions_changed.emit()
+
+
+# End R10 logistics
 
 # === R5 NG+ Memory shard (carry ending echo into next run) ===
 

@@ -1295,6 +1295,170 @@ func _run_tests() -> void:
 	else:
 		_fail("cross-round data missing after R9")
 
+	# --- R10 Multi-outpost logistics (stockpile + convoy + ash-tax) ---
+	print("Simulating R10 multi-outpost logistics...")
+	var ld10: Dictionary = _load_json("res://data/logistics.json")
+	if ld10.is_empty():
+		_fail("logistics.json failed")
+	else:
+		var orates: Dictionary = ld10.get("outpost_rates", {})
+		if orates.has("shards") and orates.has("resonance") and orates.has("vitalis") and float(ld10.get("stockpile_cap", 0.0)) > 0.0 and float(ld10.get("auto_dispatch_threshold", 0.0)) > 0.0:
+			_ok("logistics.json rates+cap+threshold")
+		else:
+			_fail("logistics.json missing core knobs: " + str(ld10.keys()))
+	if not gs.has_method("dispatch_convoy") or not gs.has_method("get_stockpile_total") or not gs.has_method("get_convoy_loss_chance") or not gs.has_method("_tick_outpost_logistics"):
+		_fail("R10 logistics methods missing")
+	else:
+		_ok("R10 logistics methods present")
+	if typeof(gs.logistics_data) == TYPE_DICTIONARY and gs.logistics_data.has("outpost_rates"):
+		_ok("GameState loaded logistics_data")
+	else:
+		_fail("GameState logistics_data not loaded")
+
+	# Stockpile production (no direct hearth rate from claims)
+	gs.pending_raid.clear()
+	gs.game_ended = false
+	gs.phase = "outlands"
+	gs.population = 8
+	gs.alignment = 0.0
+	gs.buildings = {"watch_spire": 1}
+	gs.defense_strength = 2.0
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.discovered_paths.clear()
+	gs.discovered_paths.append("vein_of_fading_echoes")
+	gs.outpost_stockpiles.clear()
+	gs.active_convoys.clear()
+	gs.memory_entries.clear()
+	gs.resources = {"shards": 10.0, "resonance": 0.0, "vitalis": 0.0}
+	# Claims must not inflate hearth rates (R10 routes through stockpiles)
+	gs.path_claims = {}
+	gs._recalculate_rates()
+	var rate_no_claim: float = float(gs.rates.get("resonance", 0.0))
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs._recalculate_rates()
+	var rate_with_claim: float = float(gs.rates.get("resonance", 0.0))
+	if abs(rate_no_claim - rate_with_claim) < 0.0001:
+		_ok("hearth rates not claim-fed (resonance=%.3f)" % rate_with_claim)
+	else:
+		_fail("claim still feeds hearth rates: %.3f -> %.3f" % [rate_no_claim, rate_with_claim])
+	# Force no auto-dispatch while we fill stockpile
+	gs.logistics_data["auto_dispatch_threshold"] = 9999.0
+	gs.logistics_data["base_loss_chance"] = 0.0
+	gs._tick_outpost_logistics(100.0)
+	var stock_after: float = gs.get_stockpile_total("vein_of_fading_echoes")
+	if stock_after > 5.0:
+		_ok("outpost stockpile grew (%.2f)" % stock_after)
+	else:
+		_fail("stockpile did not grow: %.2f" % stock_after)
+	var pile: Dictionary = gs.get_outpost_stockpile("vein_of_fading_echoes")
+	if float(pile.get("shards", 0.0)) > 0.0 and float(pile.get("resonance", 0.0)) > 0.0:
+		_ok("stockpile holds shards+resonance")
+	else:
+		_fail("stockpile contents unexpected: " + str(pile))
+
+	# Manual dispatch
+	var shards_before_r10: float = float(gs.resources.get("shards", 0.0))
+	var ok_disp: bool = gs.dispatch_convoy("vein_of_fading_echoes")
+	if ok_disp and gs.active_convoys.size() == 1 and gs.get_stockpile_total("vein_of_fading_echoes") < 0.01:
+		_ok("manual dispatch_convoy created convoy + cleared stockpile")
+	else:
+		_fail("dispatch_convoy failed ok=%s convoys=%d stock=%.2f" % [str(ok_disp), gs.active_convoys.size(), gs.get_stockpile_total("vein_of_fading_echoes")])
+	var mem_first: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "logistics_first_convoy":
+			mem_first = true
+			break
+	if mem_first:
+		_ok("first convoy memory recorded")
+	else:
+		_fail("missing logistics_first_convoy memory")
+
+	# Safe delivery (loss chance forced 0)
+	var cargo_total: float = 0.0
+	if gs.active_convoys.size() > 0:
+		var cargo0: Dictionary = gs.active_convoys[0].get("cargo", {})
+		for r in cargo0.keys():
+			cargo_total += float(cargo0[r])
+		var eta0: float = float(gs.active_convoys[0].get("eta", gs.total_play_time))
+		gs.total_play_time = eta0 + 0.1
+		gs._resolve_convoys()
+	if gs.active_convoys.is_empty() and float(gs.resources.get("shards", 0.0)) > shards_before_r10:
+		_ok("convoy delivered intact to hearth")
+	else:
+		_fail("intact delivery failed convoys=%d shards=%.2f->%.2f" % [gs.active_convoys.size(), shards_before_r10, float(gs.resources.get("shards", 0.0))])
+
+	# Loss path (force 100% loss chance, partial deliver)
+	gs.outpost_stockpiles["vein_of_fading_echoes"] = {"shards": 10.0, "resonance": 5.0, "vitalis": 2.0}
+	gs.active_convoys.clear()
+	gs.memory_entries.clear()
+	gs.logistics_data["base_loss_chance"] = 1.0
+	gs.logistics_data["watch_loss_reduction"] = 0.0
+	gs.logistics_data["defense_loss_reduction"] = 0.0
+	gs.logistics_data["tyrant_extra_loss"] = 0.0
+	gs.logistics_data["benevolent_loss_reduction"] = 0.0
+	gs.logistics_data["partial_loss_fraction"] = 0.55
+	gs.logistics_data["min_deliver_fraction"] = 0.35
+	gs.buildings = {}
+	gs.defense_strength = 0.0
+	gs.alignment = 0.0
+	var res_before_loss: float = float(gs.resources.get("shards", 0.0)) + float(gs.resources.get("resonance", 0.0)) + float(gs.resources.get("vitalis", 0.0))
+	if not gs.dispatch_convoy("vein_of_fading_echoes"):
+		_fail("loss-path dispatch failed")
+	else:
+		var eta_l: float = float(gs.active_convoys[0].get("eta", gs.total_play_time))
+		var sent_l: float = 17.0
+		gs.total_play_time = eta_l + 0.1
+		gs._resolve_convoys()
+		var res_after_loss: float = float(gs.resources.get("shards", 0.0)) + float(gs.resources.get("resonance", 0.0)) + float(gs.resources.get("vitalis", 0.0))
+		var gained: float = res_after_loss - res_before_loss
+		# Expect ~55% of 17 = 9.35
+		if gs.active_convoys.is_empty() and gained > 5.0 and gained < sent_l - 0.5:
+			_ok("convoy loss delivered partial (gained=%.2f)" % gained)
+		else:
+			_fail("loss delivery unexpected gained=%.2f convoys=%d" % [gained, gs.active_convoys.size()])
+		var mem_loss: bool = false
+		for e3 in gs.memory_entries:
+			if str(e3.get("key", "")) == "logistics_convoy_loss":
+				mem_loss = true
+				break
+		if mem_loss:
+			_ok("convoy loss memory recorded")
+		else:
+			_fail("missing logistics_convoy_loss memory")
+
+	# Auto-dispatch threshold
+	gs.logistics_data = ld10.duplicate(true)
+	gs.logistics_data["base_loss_chance"] = 0.0
+	gs.logistics_data["auto_dispatch_threshold"] = 8.0
+	gs.outpost_stockpiles.clear()
+	gs.active_convoys.clear()
+	gs.buildings = {"watch_spire": 1}
+	gs.defense_strength = 2.0
+	# Seed just under threshold then tick past it
+	gs.outpost_stockpiles["vein_of_fading_echoes"] = {"shards": 7.5, "resonance": 0.0, "vitalis": 0.0}
+	gs._tick_outpost_logistics(50.0)
+	if gs.active_convoys.size() >= 1:
+		_ok("auto-dispatch fired at threshold (convoys=%d)" % gs.active_convoys.size())
+	else:
+		_fail("auto-dispatch did not fire stock=%.2f" % gs.get_stockpile_total("vein_of_fading_echoes"))
+
+	# Cap enforcement
+	gs.active_convoys.clear()
+	gs.logistics_data["auto_dispatch_threshold"] = 9999.0
+	gs.outpost_stockpiles["vein_of_fading_echoes"] = {"shards": 47.0, "resonance": 0.5, "vitalis": 0.5}
+	gs._tick_outpost_logistics(100.0)
+	var capped: float = gs.get_stockpile_total("vein_of_fading_echoes")
+	var cap_v: float = float(gs.logistics_data.get("stockpile_cap", 48.0))
+	if capped <= cap_v + 0.05:
+		_ok("stockpile respects cap (%.2f <= %.2f)" % [capped, cap_v])
+	else:
+		_fail("stockpile exceeded cap: %.2f" % capped)
+
+	if ld10.has("outpost_rates") and rd9.has("path_raid") and td8.has("ward_pulse"):
+		_ok("R6/R7/R8/R9/R10 data intact together")
+	else:
+		_fail("cross-round data missing after R10")
+
 	_finish()
 
 

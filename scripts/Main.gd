@@ -1246,7 +1246,17 @@ func _refresh_outlands() -> void:
 						break
 		var status_base: String = ""
 		if is_claimed:
-			status_base = "Bound. The vein is held."
+			var stock_total: float = 0.0
+			if GameState.has_method("get_stockpile_total"):
+				stock_total = float(GameState.get_stockpile_total(p_id))
+			var convoy_eta: float = -1.0
+			if GameState.has_method("get_convoy_eta_remaining"):
+				convoy_eta = float(GameState.get_convoy_eta_remaining(p_id))
+			status_base = "Bound. Stockpile %.1f" % stock_total
+			if convoy_eta >= 0.0:
+				status_base += " | Supply ETA ~%.0fs" % convoy_eta
+			else:
+				status_base += " | No supply line on the road."
 			slab.add_theme_color_override("font_color", Color(0.55, 0.65, 0.5))
 		elif is_active:
 			status_base = "The lost walk the vein"
@@ -1282,6 +1292,19 @@ func _refresh_outlands() -> void:
 				hbox.add_child(cbtn)
 			if not hbox.get_children().is_empty():
 				entry.add_child(hbox)
+		# R10: Call Supply Line from claimed outpost stockpile
+		elif is_claimed:
+			var supply_btn: Button = Button.new()
+			var sblbl: String = "Call Supply Line"
+			if NarrativeSystem:
+				sblbl = NarrativeSystem.get_flavored_text(sblbl)
+			supply_btn.text = sblbl
+			supply_btn.tooltip_text = "Send the outpost stockpile toward the hearth. The ash may take a tax on the road."
+			supply_btn.custom_minimum_size = Vector2(0, 24)
+			supply_btn.add_theme_color_override("font_color", Color(0.85, 0.9, 0.75))
+			supply_btn.add_theme_font_size_override("font_size", 9)
+			supply_btn.pressed.connect(_on_call_supply_line.bind(p_id))
+			entry.add_child(supply_btn)
 		outlands_content.add_child(entry)
 
 func _on_dispatch_choice(path_id: String, choice: String) -> void:
@@ -1294,6 +1317,18 @@ func _on_dispatch_choice(path_id: String, choice: String) -> void:
 		_update_status()
 		_refresh_map()  # live update moving elements / state on dispatch
 	# On fail GS already emitted warning log
+
+func _on_call_supply_line(path_id: String) -> void:
+	# R10: manual convoy from claimed outpost stockpile
+	if not GameState.has_method("dispatch_convoy"):
+		return
+	var ok: bool = GameState.dispatch_convoy(path_id)
+	if ok:
+		_refresh_outlands()
+		_refresh_resources_display()
+		_refresh_actions()
+		_update_status()
+		_refresh_map()
 
 # === Accelerated Visual Map Panel + Memory (RTS/TD + faction + layman story per approved plan) ===
 # Mirrors the exact _ensure/_refresh unfurl + dynamic code-driven pattern used for outlands and choice.

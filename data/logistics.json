@@ -1,0 +1,18 @@
+﻿{
+  "outpost_rates": {
+    "shards": 0.06,
+    "resonance": 0.04,
+    "vitalis": 0.02
+  },
+  "stockpile_cap": 48.0,
+  "auto_dispatch_threshold": 8.0,
+  "min_dispatch_total": 2.0,
+  "convoy_travel_mult": 1.0,
+  "base_loss_chance": 0.18,
+  "watch_loss_reduction": 0.04,
+  "defense_loss_reduction": 0.015,
+  "tyrant_extra_loss": 0.08,
+  "benevolent_loss_reduction": 0.05,
+  "min_deliver_fraction": 0.35,
+  "partial_loss_fraction": 0.55
+}
