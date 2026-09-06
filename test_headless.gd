@@ -51,7 +51,7 @@ func _run_tests() -> void:
 		_fail("buildings.json failed")
 	else:
 		_ok("buildings.json (%d buildings)" % buildings_data.keys().size())
-		var expected: Array = ["labor_hall", "resonance_spire", "will_press", "vein_ward", "watch_spire"]
+		var expected: Array = ["labor_hall", "resonance_spire", "will_press", "vein_ward", "watch_spire", "echo_choir", "ash_binder"]
 		for b in expected:
 			if buildings_data.has(b):
 				_ok("building present: " + b)
@@ -62,7 +62,7 @@ func _run_tests() -> void:
 		_fail("actions.json failed")
 	else:
 		_ok("actions.json (%d actions)" % actions_data.keys().size())
-		for a in ["queue_resonance_spire", "queue_will_press", "queue_vein_ward"]:
+		for a in ["queue_resonance_spire", "queue_will_press", "queue_vein_ward", "queue_echo_choir", "queue_ash_binder"]:
 			if actions_data.has(a):
 				_ok("action present: " + a)
 			else:
@@ -259,6 +259,155 @@ func _run_tests() -> void:
 
 	print("memory_entries count: ", gs.memory_entries.size())
 	print("phase=", gs.phase, " pop=", gs.population, " claims=", gs.path_claims.keys())
+
+	# --- R4 Faction unlocks (natural, no force-append) ---
+	print("Simulating natural faction unlocks (nurture Echo Choir + harvest Ash Binder)...")
+	if not gs.has_method("meets_faction_requirements") or not gs.has_method("_check_unlocks"):
+		_fail("faction unlock methods missing")
+	else:
+		_ok("faction unlock methods present")
+
+	# Nurture fork: shelter + positive align + 1 nurture claim -> echo_choir + resonance_spire
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.phase = "outlands"
+	gs.flags["outlands_reached"] = true
+	gs.early_choice = "shelter"
+	gs.alignment = 0.35
+	gs.population = 8
+	gs.ember_pulse = 6.0
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.path_moral_nurture = 1
+	gs.path_moral_harvest = 0
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.memory_entries.clear()
+	# Ensure buildings data loaded
+	if gs.building_data.is_empty() and gs.has_method("_load_building_data"):
+		gs._load_building_data()
+	# Must NOT already be unlocked
+	while "echo_choir" in gs.unlocked_buildings:
+		gs.unlocked_buildings.erase("echo_choir")
+	while "resonance_spire" in gs.unlocked_buildings:
+		gs.unlocked_buildings.erase("resonance_spire")
+	var echo_req: Dictionary = gs.building_data.get("echo_choir", {}).get("require", {})
+	if gs.meets_faction_requirements(echo_req):
+		_ok("echo_choir faction require met under nurture state")
+	else:
+		_fail("echo_choir require should pass (align/shelter/claims/nurture)")
+	gs._check_unlocks()
+	if "echo_choir" in gs.unlocked_buildings:
+		_ok("echo_choir unlocked naturally via _check_unlocks")
+	else:
+		_fail("echo_choir did not unlock naturally")
+	if "resonance_spire" in gs.unlocked_buildings:
+		_ok("resonance_spire unlocked naturally (align_gt)")
+	else:
+		_fail("resonance_spire did not unlock naturally")
+	var has_faction_mem: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")).begins_with("faction_unlock_"):
+			has_faction_mem = true
+			break
+	if has_faction_mem:
+		_ok("memory_entries has faction_unlock")
+	else:
+		_fail("memory_entries missing faction_unlock after natural unlock")
+
+	# Production complete for echo_choir after natural unlock
+	gs.resources["shards"] = 200.0
+	gs.resources["resonance"] = 60.0
+	if not gs.start_production("echo_choir"):
+		_fail("start_production echo_choir failed after natural unlock")
+	else:
+		_ok("queued echo_choir")
+	if gs.production_queue.size() > 0:
+		gs.production_queue[0]["eta"] = gs.total_play_time
+	if gs.has_method("advance_production"):
+		gs.advance_production(1.0)
+	if int(gs.buildings.get("echo_choir", 0)) >= 1:
+		_ok("echo_choir built via production")
+	else:
+		_fail("echo_choir not built after production")
+
+	# Harvest fork: demand + negative align + harvest tally -> ash_binder + will_press
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.phase = "outlands"
+	gs.flags["outlands_reached"] = true
+	gs.early_choice = "demand"
+	gs.alignment = -0.35
+	gs.population = 8
+	gs.ember_pulse = 6.0
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.path_moral_nurture = 0
+	gs.path_moral_harvest = 1
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.memory_entries.clear()
+	while "ash_binder" in gs.unlocked_buildings:
+		gs.unlocked_buildings.erase("ash_binder")
+	while "will_press" in gs.unlocked_buildings:
+		gs.unlocked_buildings.erase("will_press")
+	var binder_req: Dictionary = gs.building_data.get("ash_binder", {}).get("require", {})
+	if gs.meets_faction_requirements(binder_req):
+		_ok("ash_binder faction require met under harvest state")
+	else:
+		_fail("ash_binder require should pass (align/demand/claims/harvest)")
+	gs._check_unlocks()
+	if "ash_binder" in gs.unlocked_buildings:
+		_ok("ash_binder unlocked naturally via _check_unlocks")
+	else:
+		_fail("ash_binder did not unlock naturally")
+	if "will_press" in gs.unlocked_buildings:
+		_ok("will_press unlocked naturally (align_lt)")
+	else:
+		_fail("will_press did not unlock naturally")
+	has_faction_mem = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "faction_unlock_ash_binder":
+			has_faction_mem = true
+			break
+	if has_faction_mem:
+		_ok("memory_entries has faction_unlock_ash_binder")
+	else:
+		_fail("memory_entries missing faction_unlock_ash_binder")
+
+	gs.resources["shards"] = 200.0
+	gs.resources["resonance"] = 60.0
+	if not gs.start_production("ash_binder"):
+		_fail("start_production ash_binder failed after natural unlock")
+	else:
+		_ok("queued ash_binder")
+	if gs.production_queue.size() > 0:
+		gs.production_queue[0]["eta"] = gs.total_play_time
+	if gs.has_method("advance_production"):
+		gs.advance_production(1.0)
+	if int(gs.buildings.get("ash_binder", 0)) >= 1:
+		_ok("ash_binder built via production")
+	else:
+		_fail("ash_binder not built after production")
+
+	# Negative control: wrong early_choice must block echo_choir
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.phase = "outlands"
+	gs.early_choice = "demand"
+	gs.alignment = 0.5
+	gs.path_moral_nurture = 2
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	while "echo_choir" in gs.unlocked_buildings:
+		gs.unlocked_buildings.erase("echo_choir")
+	echo_req = gs.building_data.get("echo_choir", {}).get("require", {})
+	if not gs.meets_faction_requirements(echo_req):
+		_ok("echo_choir blocked when early_choice is demand (not shelter)")
+	else:
+		_fail("echo_choir should require early_choice shelter")
+	gs._check_unlocks()
+	if "echo_choir" not in gs.unlocked_buildings:
+		_ok("echo_choir stayed locked under wrong early_choice")
+	else:
+		_fail("echo_choir unlocked despite wrong early_choice")
 
 	# --- R3 Ending reckoning ---
 	print("Simulating ending reckoning (nurture win + collapse lose)...")

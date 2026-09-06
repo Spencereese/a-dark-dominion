@@ -138,7 +138,6 @@
       "add_defense": 5.0
     }
   },
-
   "queue_labor_hall": {
     "name": "Queue Hands at the Labor Hall",
     "tooltip": "Commit labor and time to train steady hands. They will strengthen the watch and the walks.",
@@ -159,7 +158,6 @@
       "log_category": "story"
     }
   },
-
   "queue_spire_works": {
     "name": "Queue Construction at the Spire Works",
     "tooltip": "Speed the raising of more eyes along the veins.",
@@ -180,7 +178,6 @@
       "log_category": "story"
     }
   },
-
   "queue_dread_foundry": {
     "name": "Queue at the Dread Foundry",
     "tooltip": "Forge tools that bite. High cost in will, high return in control.",
@@ -201,7 +198,6 @@
       "log_category": "revelation"
     }
   },
-
   "queue_sanctuary_ward": {
     "name": "Queue at the Sanctuary Ward",
     "tooltip": "Raise protections that remember those who answered willingly.",
@@ -350,6 +346,46 @@
       "start_production": "vein_ward",
       "log": "The Ward stands. The veins feel a little less hungry.",
       "log_category": "story"
+    }
+  },
+  "queue_echo_choir": {
+    "name": "Queue at the Echo Choir",
+    "tooltip": "Call the returned voices. Softens the ash and deepens what the veins give back.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "echo_choir"
+    },
+    "unlocks_at": {
+      "unlocked_building": "echo_choir"
+    },
+    "cost": {
+      "shards": 34,
+      "resonance": 12
+    },
+    "effects": {
+      "start_production": "echo_choir",
+      "log": "The Choir gathers. Voices answer the circle that first sheltered them.",
+      "log_category": "story"
+    }
+  },
+  "queue_ash_binder": {
+    "name": "Queue at the Ash Binder",
+    "tooltip": "Bind the claimed ash harder. Gain and retaliation follow the first demand.",
+    "conditions": {
+      "phase": "outlands",
+      "unlocked_building": "ash_binder"
+    },
+    "unlocks_at": {
+      "unlocked_building": "ash_binder"
+    },
+    "cost": {
+      "shards": 32,
+      "resonance": 8
+    },
+    "effects": {
+      "start_production": "ash_binder",
+      "log": "The Binder works. The ash yields because you taught it to.",
+      "log_category": "revelation"
     }
   }
 }

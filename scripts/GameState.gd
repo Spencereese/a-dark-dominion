@@ -958,6 +958,9 @@ func _unlock_building(id: String) -> void:
 		unlocked_buildings.append(id)
 		GameEvents.building_unlocked.emit(id)
 		GameEvents.available_actions_changed.emit()
+		# R4: faction-gated buildings (data "require") write Memory when they unlock naturally
+		if building_data.has(id) and building_data[id].has("require"):
+			add_memory("faction_unlock_" + id, {"building": id, "require": building_data[id]["require"]})
 
 # === Unlocks & Progression ===
 func _check_unlocks() -> void:
@@ -1589,6 +1592,31 @@ func _complete_production(q: Dictionary) -> void:
 			defense_strength = min(12.0, defense_strength + float(eff["defense"]))
 		if eff.has("loss_reduction"):
 			flags["loss_reduction"] = float(flags.get("loss_reduction", 0.0)) + float(eff["loss_reduction"])
+	elif qtype == "choir" or bid == "echo_choir":
+		# R4 nurture faction: resonance return + soft defense + loss reduction
+		var labor_gain_c: float = float(eff.get("labor_output", 1.8))
+		production_labor += labor_gain_c
+		_auto_assign_labor(labor_gain_c * 0.45)
+		if eff.has("boost_resonance"):
+			defense_strength = min(12.0, defense_strength + 0.6)
+		if eff.has("expedition_return"):
+			flags["expedition_bonus"] = float(flags.get("expedition_bonus", 0.0)) + float(eff["expedition_return"])
+		if eff.has("loss_reduction"):
+			flags["loss_reduction"] = float(flags.get("loss_reduction", 0.0)) + float(eff["loss_reduction"])
+		if eff.has("defense"):
+			defense_strength = min(12.0, defense_strength + float(eff["defense"]))
+	elif qtype == "binder" or bid == "ash_binder":
+		# R4 harvest faction: labor + shards + raid retaliation
+		var labor_gain_b: float = float(eff.get("labor_output", 2.8))
+		production_labor += labor_gain_b
+		_auto_assign_labor(labor_gain_b * 0.35)
+		if eff.has("shards_on_complete"):
+			resources["shards"] = float(resources.get("shards", 0.0)) + float(eff["shards_on_complete"])
+		if eff.has("raid_retaliation"):
+			var ret_b: float = float(eff["raid_retaliation"])
+			flags["raid_retaliation"] = float(flags.get("raid_retaliation", 0.0)) + ret_b
+		if eff.has("defense"):
+			defense_strength = min(15.0, defense_strength + float(eff["defense"]) * 1.1)
 	# Update rates/boosts from new labor/facility
 	_recalculate_rates()
 	# Log + Memory + reframe (every production advances the realization)
@@ -1701,6 +1729,16 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 				base = "The Vein Ward holds the lines the way you first held the havens open. Those who walk them feel the circle differently now."
 			else:
 				base = "The Vein Ward stands where the choice at the havens taught the ash what shelter or silence means."
+		elif bid == "echo_choir":
+			if choice == "shelter":
+				base = "The Echo Choir sings with the voices you first sheltered. Every vein they soften remembers the open circle."
+			else:
+				base = "The Echo Choir rises anyway. Listening along the veins remade what the first haven choice began."
+		elif bid == "ash_binder":
+			if choice == "demand":
+				base = "The Ash Binder seals what the first demand taught: the ash yields when will does not ask."
+			else:
+				base = "The Ash Binder closes the claimed ground. Harvest along the veins taught this shape of dominion."
 	elif event_key.begins_with("ending_"):
 		var eid: String = event_key.replace("ending_", "")
 		var outcome: String = str(extra.get("outcome", ""))
@@ -1712,6 +1750,25 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 			base = "Memory scatters. The ember failed, or the veins took everyone. The cycle does not keep score of nurture or harvest — only of ash."
 		else:
 			base = "An ending settles (" + eid + " / " + outcome + "). The ash keeps the pattern of " + choice + "."
+	elif event_key.begins_with("faction_unlock_"):
+		var fbid: String = str(extra.get("building", event_key.replace("faction_unlock_", "")))
+		var fname: String = building_data.get(fbid, {}).get("name", fbid)
+		if fbid == "echo_choir" or fbid == "resonance_spire" or fbid == "sanctuary_ward":
+			if choice == "shelter":
+				base = "The " + fname + " unlocks because you opened the havens and listened along the veins. The circle remembers that mercy as architecture."
+			elif choice == "demand":
+				base = "The " + fname + " almost does not fit the demand you first made — yet the pulse still answers when alignment softens enough to hear."
+			else:
+				base = "The " + fname + " stands ready. Nurture-leaning will shaped the ash enough to open this gate."
+		elif fbid == "ash_binder" or fbid == "will_press" or fbid == "dread_foundry" or fbid == "spire_foundry":
+			if choice == "demand":
+				base = "The " + fname + " unlocks because you demanded work at the first haven and harvested the veins. The ash learned that shape of will."
+			elif choice == "seal":
+				base = "The " + fname + " unlocks from a circle that learned to close. Binding follows sealing."
+			else:
+				base = "The " + fname + " stands ready. Harvest-leaning will pressed the ash hard enough to open this gate."
+		else:
+			base = "A faction gate opens: the " + fname + ". Your early choice (" + choice + ") and the weight you set on the veins made this possible."
 	elif event_key.begins_with("production_queued_"):
 		var bid: String = str(extra.get("building", ""))
 		var dname: String = building_data.get(bid, {}).get("name", bid)
@@ -1766,6 +1823,17 @@ func meets_faction_requirements(req: Dictionary) -> bool:
 		return false
 	if req.has("early_choice_is") and early_choice != str(req["early_choice_is"]):
 		return false
+	# R4: richer JSON faction gates (claims + path moral tallies + prerequisite building)
+	if req.has("min_claims") and _claim_count() < int(req["min_claims"]):
+		return false
+	if req.has("path_moral_nurture_gte") and path_moral_nurture < int(req["path_moral_nurture_gte"]):
+		return false
+	if req.has("path_moral_harvest_gte") and path_moral_harvest < int(req["path_moral_harvest_gte"]):
+		return false
+	if req.has("building"):
+		var need: String = str(req["building"])
+		if int(buildings.get(need, 0)) < 1:
+			return false
 	return true
 
 # Map support (for 2D OutlandsMap scene + UI)
@@ -1901,9 +1969,9 @@ func _check_ending_conditions(source: String = "") -> void:
 	elif alignment < -0.1:
 		harvest_score += 1
 	# Buildings reinforce trajectory (faction production)
-	if int(buildings.get("resonance_spire", 0)) > 0 or int(buildings.get("sanctuary_ward", 0)) > 0 or int(buildings.get("vein_ward", 0)) > 0:
+	if int(buildings.get("resonance_spire", 0)) > 0 or int(buildings.get("sanctuary_ward", 0)) > 0 or int(buildings.get("vein_ward", 0)) > 0 or int(buildings.get("echo_choir", 0)) > 0:
 		nurture_score += 1
-	if int(buildings.get("will_press", 0)) > 0 or int(buildings.get("dread_foundry", 0)) > 0 or int(buildings.get("spire_foundry", 0)) > 0:
+	if int(buildings.get("will_press", 0)) > 0 or int(buildings.get("dread_foundry", 0)) > 0 or int(buildings.get("spire_foundry", 0)) > 0 or int(buildings.get("ash_binder", 0)) > 0:
 		harvest_score += 1
 	if nurture_score > harvest_score:
 		trigger_ending("nurture_circle", "score n=%d h=%d" % [nurture_score, harvest_score])
