@@ -67,6 +67,16 @@ func _run_tests() -> void:
 				_ok("action present: " + a)
 			else:
 				_fail("action missing: " + a)
+	var endings_data: Dictionary = _load_json("res://data/endings.json")
+	if endings_data.is_empty():
+		_fail("endings.json failed")
+	else:
+		_ok("endings.json (%d endings)" % endings_data.keys().size())
+		for eid in ["nurture_circle", "harvest_dominion", "collapse_ash"]:
+			if endings_data.has(eid):
+				_ok("ending present: " + eid)
+			else:
+				_fail("ending missing: " + eid)
 
 	# --- Scenes ---
 	print("Checking scenes...")
@@ -110,7 +120,7 @@ func _run_tests() -> void:
 			main_inst.queue_free()
 
 	# --- Core loop simulation ---
-	print("Simulating core loop (build → gather → moral choice → consequence)...")
+	print("Simulating core loop (build â†’ gather â†’ moral choice â†’ consequence)...")
 	_ok("GameState reachable")
 	if gs.has_method("reset_to_new_game"):
 		gs.reset_to_new_game()
@@ -119,7 +129,7 @@ func _run_tests() -> void:
 	if not gs.perform_action("nurture_ember"):
 		_fail("nurture_ember failed")
 	else:
-		_ok("nurture_ember → phase " + str(gs.phase))
+		_ok("nurture_ember â†’ phase " + str(gs.phase))
 
 	gs.resources["shards"] = 200.0
 	gs.resources["resonance"] = 40.0
@@ -249,6 +259,157 @@ func _run_tests() -> void:
 
 	print("memory_entries count: ", gs.memory_entries.size())
 	print("phase=", gs.phase, " pop=", gs.population, " claims=", gs.path_claims.keys())
+
+	# --- R3 Ending reckoning ---
+	print("Simulating ending reckoning (nurture win + collapse lose)...")
+	if not gs.has_method("trigger_ending") or not gs.has_method("_check_ending_conditions"):
+		_fail("ending methods missing on GameState")
+	else:
+		_ok("ending methods present")
+
+	# Reset sim state for nurture win path
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.phase = "outlands"
+	gs.flags["outlands_reached"] = true
+	gs.early_choice = "shelter"
+	gs.alignment = 0.35
+	gs.population = 8
+	gs.ember_pulse = 6.0
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.ending_outcome = ""
+	gs.path_moral_nurture = 0
+	gs.path_moral_harvest = 0
+	gs.path_claims = {}
+	gs.memory_entries.clear()
+	gs.choice_history.clear()
+	gs.flags["demand_more_policy"] = false
+	if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+		gs._load_endings_data()
+	if gs.ending_data.is_empty():
+		_fail("ending_data empty after load")
+	else:
+		_ok("ending_data loaded (%d)" % gs.ending_data.keys().size())
+
+	# Claim two veins with listen (nurture) morals
+	var pids: Array = []
+	if gs.path_data:
+		for pid in gs.path_data.keys():
+			pids.append(str(pid))
+	if pids.size() < 2:
+		_fail("need >=2 paths for ending sim")
+	else:
+		gs.discovered_paths.clear()
+		for _dp in pids:
+			gs.discovered_paths.append(str(_dp))
+		gs.resources["shards"] = 200.0
+		gs.resources["resonance"] = 40.0
+		var p1: String = str(pids[0])
+		var p2: String = str(pids[1])
+		if not gs.dispatch_expedition(p1, "listen"):
+			# Some paths use respect/parley instead of listen — try first moral option
+			var opts: Array = gs.path_data[p1].get("moral_options", [])
+			var oid: String = "listen"
+			if opts.size() > 0:
+				oid = str(opts[0].get("id", "listen"))
+			if not gs.dispatch_expedition(p1, oid):
+				_fail("dispatch nurture path1 failed")
+			else:
+				_ok("dispatched path1 with " + oid)
+		else:
+			_ok("dispatched path1 listen")
+		if gs.active_expeditions.size() > 0:
+			for exp in gs.active_expeditions.duplicate():
+				gs._resolve_one_expedition(exp)
+			gs.active_expeditions.clear()
+		if not bool(gs.path_claims.get(p1, false)):
+			_fail("path1 not claimed")
+		else:
+			_ok("path1 claimed for nurture ending")
+		if gs.game_ended:
+			_fail("ending fired too early after 1 claim")
+		else:
+			_ok("no ending yet after 1 claim (threshold=2)")
+
+		var opts2: Array = gs.path_data[p2].get("moral_options", [])
+		var oid2: String = "listen"
+		if opts2.size() > 0:
+			# Prefer positive-align option
+			for o in opts2:
+				if float(o.get("alignment", 0.0)) > 0.0:
+					oid2 = str(o.get("id", oid2))
+					break
+		if not gs.dispatch_expedition(p2, oid2):
+			_fail("dispatch nurture path2 failed")
+		else:
+			_ok("dispatched path2 with " + oid2)
+		if gs.active_expeditions.size() > 0:
+			for exp in gs.active_expeditions.duplicate():
+				gs._resolve_one_expedition(exp)
+			gs.active_expeditions.clear()
+
+		if not gs.game_ended:
+			# Force check if claim hook missed
+			gs._check_ending_conditions("path_claim")
+		if gs.game_ended and gs.ending_id == "nurture_circle" and gs.ending_outcome == "win":
+			_ok("nurture_circle WIN ending fired")
+		elif gs.game_ended:
+			_fail("expected nurture_circle win, got " + str(gs.ending_id) + "/" + str(gs.ending_outcome))
+		else:
+			_fail("nurture ending did not fire after 2 claims")
+
+		var has_end_mem: bool = false
+		for e in gs.memory_entries:
+			if str(e.get("key", "")).begins_with("ending_"):
+				has_end_mem = true
+				break
+		if has_end_mem:
+			_ok("memory_entries has ending")
+		else:
+			_fail("memory_entries missing ending")
+
+		if gs.has_method("get_ending_info"):
+			var info: Dictionary = gs.get_ending_info()
+			if info.has("title") and str(info.get("badge", "")).find("WIN") >= 0:
+				_ok("get_ending_info win badge present")
+			else:
+				_fail("get_ending_info incomplete: " + str(info.keys()))
+
+	# Collapse lose path
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.phase = "outlands"
+	gs.flags["outlands_reached"] = true
+	gs.early_choice = "demand"
+	gs.alignment = -0.4
+	gs.population = 0
+	gs.ember_pulse = 2.0
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.game_ended = false
+	gs.ending_id = ""
+	gs.ending_outcome = ""
+	if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+		gs._load_endings_data()
+	gs._check_ending_conditions("raid")
+	if gs.game_ended and gs.ending_id == "collapse_ash" and gs.ending_outcome == "lose":
+		_ok("collapse_ash LOSE ending fired")
+	else:
+		_fail("expected collapse_ash lose, got " + str(gs.ending_id) + "/" + str(gs.ending_outcome) + " ended=" + str(gs.game_ended))
+
+	# Harvest win via explicit trigger sanity (after reset)
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	gs.game_ended = false
+	if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+		gs._load_endings_data()
+	gs.trigger_ending("harvest_dominion", "headless force")
+	if gs.game_ended and gs.ending_id == "harvest_dominion" and gs.ending_outcome == "win":
+		_ok("harvest_dominion WIN ending via trigger_ending")
+	else:
+		_fail("harvest_dominion trigger failed")
+
+	print("ending_id=", gs.ending_id, " outcome=", gs.ending_outcome)
 	_finish()
 
 func _finish() -> void:
@@ -268,3 +429,4 @@ func _load_json(path: String) -> Dictionary:
 			return parsed
 	print("  Failed to load/parse JSON: ", path)
 	return {}
+

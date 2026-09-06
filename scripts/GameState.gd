@@ -41,7 +41,7 @@ var choice_history: Array = []  # list of {event, choice, time} for future narra
 
 # Accelerated visual TD / production / faction phase (per approved plan)
 var production_queue: Array[Dictionary] = []  # {id, type ("labor"|"spire"|...), eta, contrib}
-var memory_entries: Array[Dictionary] = []  # {key, text, time, context} — tied to early_choice for Memory panel
+var memory_entries: Array[Dictionary] = []  # {key, text, time, context} â€” tied to early_choice for Memory panel
 var labor_boost: float = 0.0  # legacy compat from early labor queues (decays; new system uses production_labor + labor_assigned)
 
 var last_played_unix: int = 0
@@ -67,6 +67,15 @@ var build_speed_bonus: float = 0.0  # from spire_works etc; reduces eta of activ
 # "Dragon's Whispers" adapted creatively to ash/veins/ember/echoes to obey differentiation (no dragons/generic fantasy). Ties to areas (path ids) or ascends (phase advances).
 var active_whispers: Dictionary = {}  # whisper_id -> { "type": "double_drops"|"echo_manifest"|"resonance_surge", "expires": float(total_play_time), "area": String (path or ""), "desc": String }
 
+
+# R3 ending reckoning (nurture vs harvest + collapse lose)
+var ending_data: Dictionary = {}  # loaded from data/endings.json
+var game_ended: bool = false
+var ending_id: String = ""
+var ending_outcome: String = ""  # "win" | "lose"
+var path_moral_nurture: int = 0  # listen/mend/positive path options
+var path_moral_harvest: int = 0  # harvest/cut/claim/negative path options
+const ENDING_CLAIM_THRESHOLD := 2  # veins claimed before reckoning can fire
 # === Data-Driven Content ===
 var building_data: Dictionary = {}  # loaded from data/buildings.json
 var action_data: Dictionary = {}  # loaded from data/actions.json -- 100% data-driven actions
@@ -103,6 +112,7 @@ func _ready() -> void:
 	_load_building_data()
 	_load_paths_data()  # Phase 1+3+4: after building load, exact pattern
 	_load_action_data()  # 100% data-driven actions
+	_load_endings_data()
 	_load_or_init()
 	# Seed some starting flavor if brand new
 	if resources["shards"] <= 0.1 and phase == "dark":
@@ -158,6 +168,19 @@ func _load_action_data() -> void:
 	else:
 		push_warning("actions.json not found at " + path)
 
+
+func _load_endings_data() -> void:
+	# R3: data-driven ending catalog (nurture win / harvest win / collapse lose)
+	var path: String = "res://data/endings.json"
+	if ResourceLoader.exists(path):
+		var text: String = FileAccess.get_file_as_string(path)
+		var parsed = JSON.parse_string(text)
+		if typeof(parsed) == TYPE_DICTIONARY:
+			ending_data = parsed
+			print("[GameState] Loaded endings data: ", ending_data.keys())
+			return
+	ending_data = {}
+	push_warning("Failed to load endings.json")
 func _process(delta: float) -> void:
 	if is_paused or time_scale <= 0.0:
 		return
@@ -174,6 +197,8 @@ func _process(delta: float) -> void:
 
 func advance_time(seconds: float) -> void:
 	if seconds <= 0:
+		return
+	if game_ended:
 		return
 
 	total_play_time += seconds
@@ -252,6 +277,8 @@ func advance_time(seconds: float) -> void:
 	# Save occasionally
 	if int(total_play_time) % 30 == 0:
 		save_game()
+
+	_check_ending_conditions("tick")
 
 func set_time_scale(new_scale: float) -> void:
 	time_scale = clamp(new_scale, 0.0, 100.0)
@@ -382,7 +409,7 @@ func _apply_action_effects(action_id: String, def: Dictionary) -> void:
 	if effects.has("set_flag"):
 		flags[str(effects["set_flag"])] = true
 		if str(effects["set_flag"]) == "demand_more_policy" and early_choice != "":
-			# Fire reframe immediately on first demand after the early choice — another vector for the punch
+			# Fire reframe immediately on first demand after the early choice â€” another vector for the punch
 			_check_delayed_choice_reframe("demand_after")
 			add_memory("demand_more", {})
 	if effects.has("align_delta"):
@@ -421,6 +448,8 @@ func _apply_action_effects(action_id: String, def: Dictionary) -> void:
 
 # === Actions (called by UI buttons) ===
 func perform_action(action_id: String) -> bool:
+	if game_ended:
+		return false
 	var success: bool = false
 
 	if action_data.has(action_id):
@@ -612,7 +641,7 @@ func _pick_expedition_choice(pdef: Dictionary) -> String:
 		var opt_align: float = float(opt.get("alignment", 0.0))
 		var score: float = opt_align
 		if alignment < -0.2:
-			# Tyrant: prefer more negative (risk/volume) — invert for selection
+			# Tyrant: prefer more negative (risk/volume) â€” invert for selection
 			score = -opt_align
 		# else benevolent prefers positive as-is
 		if score > best_score:
@@ -748,8 +777,13 @@ func _resolve_one_expedition(exp: Dictionary) -> void:
 	add_memory("path_claim_" + path_id, {"path": path_id, "choice": choice, "moral": option.get("id", "")})
 
 	# Polish: delayed gut-punch reframe that references the early choice explicitly.
-	# This is the "oh no, I did this" moment — when the player has sent people out on paths, the game names the haven choice as the origin.
+	# This is the "oh no, I did this" moment â€” when the player has sent people out on paths, the game names the haven choice as the origin.
 	_check_delayed_choice_reframe("path_claim", path_id)
+
+	# R3: tally nurture vs harvest moral from this claim, then check ending reckoning
+	_tally_path_moral(str(option.get("id", choice)), float(option.get("alignment", 0.0)))
+	choice_history.append({"event": "path_claim", "choice": str(option.get("id", choice)), "path": path_id, "time": total_play_time, "align": alignment})
+	_check_ending_conditions("path_claim")
 
 	# sfx for resolve (use dispatch/resolve_expeditions hook); first_bound already emitted above if applicable
 	GameEvents.sfx_cue.emit("expedition_resolved", {"path_id": path_id, "align_delta": align_delta})
@@ -791,7 +825,7 @@ func _resolve_early_choice(event_key: String, choice_id: String) -> bool:
 		_log("The choice has no hold here.", "warning")
 		return false
 
-	# Pre-afford for choices that cost (shelter) — the prompt options describe cost, but enforce here like old perform path
+	# Pre-afford for choices that cost (shelter) â€” the prompt options describe cost, but enforce here like old perform path
 	if choice_id == "shelter":
 		var cost_shards: float = 20.0
 		if resources.get("shards", 0.0) < cost_shards:
@@ -1038,7 +1072,7 @@ func _check_first_shard_hints() -> void:
 
 # Polish: dedicated early choice event checker. Called every advance_time + after load/unlocks.
 # Keeps the trigger condition (haven + pop) but centralizes the "proper" handling.
-# The gut-punch is not the choice itself — it is the later reframe that names the choice as the origin of all later binding.
+# The gut-punch is not the choice itself â€” it is the later reframe that names the choice as the origin of all later binding.
 func _check_early_choice_events() -> void:
 	if flags.get("incursion_pending", false) and not flags.get("incursion_handled", false):
 		# Still waiting on player; UI will show the prompt (Main handles via flag)
@@ -1141,7 +1175,7 @@ func trigger_ash_whisper(source: String = "random") -> void:
 		"resonance_surge":
 			desc = "The ash hums an old resonance. Echoes answer more readily." + ("" if area == "" else " From " + _get_path_name(area) + ".")
 		"echo_manifest":
-			desc = "Something in the ash takes form along the old lines — a resonant echo. Rare remnants may surface." + ("" if area == "" else " (" + _get_path_name(area) + ")")
+			desc = "Something in the ash takes form along the old lines â€” a resonant echo. Rare remnants may surface." + ("" if area == "" else " (" + _get_path_name(area) + ")")
 			# Special "mob"/encounter flavor: on resolve will yield rare vitalis "gear"
 
 	active_whispers[wid] = {
@@ -1278,6 +1312,7 @@ func _trigger_path_raid() -> void:
 		if not mitigated and pop_loss > 0:
 			add_memory("raid_loss", {"pop_loss": pop_loss, "def_val": def_val})
 	GameEvents.raid_occurred.emit(mitigated, pop_loss)
+	_check_ending_conditions("raid")
 
 func _log(text: String, category: String = "story") -> void:
 	if NarrativeSystem:
@@ -1327,6 +1362,11 @@ func _load_or_init() -> void:
 		defense_strength = 0.0
 		early_choice = ""
 		choice_history.clear()
+		game_ended = false
+		ending_id = ""
+		ending_outcome = ""
+		path_moral_nurture = 0
+		path_moral_harvest = 0
 		production_queue.clear()
 		memory_entries.clear()
 		production_labor = 0.0
@@ -1335,7 +1375,7 @@ func _load_or_init() -> void:
 		labor_boost = 0.0
 		active_whispers.clear()
 		# path_data populated by _load_paths_data, not reset here
-		_log("You wake with a jolt. Your head throbs. Smoke stings your lungs. The ground is littered with embers — small glowing sparks scattered in the ash and debris. One brighter ember pulses near your hand, the strongest. You have no memory of how you got here.", "story")
+		_log("You wake with a jolt. Your head throbs. Smoke stings your lungs. The ground is littered with embers â€” small glowing sparks scattered in the ash and debris. One brighter ember pulses near your hand, the strongest. You have no memory of how you got here.", "story")
 
 	# Ensure newly added paths (from data/paths.json Phase 3/4 expansions) appear for saves that already reached outlands.
 	# Keeps old progress intact while making location additions data-only (no code list updates needed after this).
@@ -1661,6 +1701,17 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 				base = "The Vein Ward holds the lines the way you first held the havens open. Those who walk them feel the circle differently now."
 			else:
 				base = "The Vein Ward stands where the choice at the havens taught the ash what shelter or silence means."
+	elif event_key.begins_with("ending_"):
+		var eid: String = event_key.replace("ending_", "")
+		var outcome: String = str(extra.get("outcome", ""))
+		if eid == "nurture_circle":
+			base = "Memory closes on an open circle. You chose to listen more than you cut. The ash still remembers your first haven choice: " + choice + "."
+		elif eid == "harvest_dominion":
+			base = "Memory closes on a closed fist. You harvested what the veins would give. The first haven choice (" + choice + ") named the shape of this dominion."
+		elif eid == "collapse_ash":
+			base = "Memory scatters. The ember failed, or the veins took everyone. The cycle does not keep score of nurture or harvest — only of ash."
+		else:
+			base = "An ending settles (" + eid + " / " + outcome + "). The ash keeps the pattern of " + choice + "."
 	elif event_key.begins_with("production_queued_"):
 		var bid: String = str(extra.get("building", ""))
 		var dname: String = building_data.get(bid, {}).get("name", bid)
@@ -1778,6 +1829,131 @@ func get_current_narrative_context() -> Dictionary:
 		}
 	return ctx
 
+
+# === R3 Ending reckoning (nurture vs harvest + collapse) ===
+
+func _claim_count() -> int:
+	var n: int = 0
+	for k in path_claims.keys():
+		if path_claims[k]:
+			n += 1
+	return n
+
+func _tally_path_moral(option_id: String, align_delta: float) -> void:
+	# Classify expedition moral: positive / listen/mend = nurture; negative / harvest/cut/claim = harvest
+	var oid: String = option_id.to_lower()
+	var nurture_keys: Array = ["listen", "mend", "offer", "shelter", "passage", "ward"]
+	var harvest_keys: Array = ["harvest", "cut", "claim", "demand", "seal", "press", "force"]
+	var is_nurture: bool = false
+	var is_harvest: bool = false
+	for k in nurture_keys:
+		if oid.find(k) >= 0:
+			is_nurture = true
+			break
+	for k in harvest_keys:
+		if oid.find(k) >= 0:
+			is_harvest = true
+			break
+	if is_nurture and not is_harvest:
+		path_moral_nurture += 1
+	elif is_harvest and not is_nurture:
+		path_moral_harvest += 1
+	elif align_delta > 0.01:
+		path_moral_nurture += 1
+	elif align_delta < -0.01:
+		path_moral_harvest += 1
+	else:
+		# Neutral option: lean by current Weight
+		if alignment >= 0.0:
+			path_moral_nurture += 1
+		else:
+			path_moral_harvest += 1
+
+func _check_ending_conditions(source: String = "") -> void:
+	if game_ended:
+		return
+	# Lose first: circle collapses
+	if phase == "outlands" or _claim_count() > 0:
+		if population <= 0:
+			trigger_ending("collapse_ash", "population wiped (%s)" % source)
+			return
+		if ember_pulse <= 0.0 and _claim_count() >= 1 and total_play_time > 30.0:
+			trigger_ending("collapse_ash", "ember died (%s)" % source)
+			return
+	# Win reckoning: enough veins claimed + early moral choice recorded
+	if early_choice == "" or _claim_count() < ENDING_CLAIM_THRESHOLD:
+		return
+	# Prefer firing on path_claim (session beat); allow tick only if somehow missed
+	if source != "path_claim" and source != "force":
+		return
+	var nurture_score: int = path_moral_nurture
+	var harvest_score: int = path_moral_harvest
+	if early_choice == "shelter":
+		nurture_score += 2
+	elif early_choice == "demand" or early_choice == "seal":
+		harvest_score += 2
+	if flags.get("demand_more_policy", false):
+		harvest_score += 1
+	else:
+		nurture_score += 1
+	if alignment > 0.1:
+		nurture_score += 1
+	elif alignment < -0.1:
+		harvest_score += 1
+	# Buildings reinforce trajectory (faction production)
+	if int(buildings.get("resonance_spire", 0)) > 0 or int(buildings.get("sanctuary_ward", 0)) > 0 or int(buildings.get("vein_ward", 0)) > 0:
+		nurture_score += 1
+	if int(buildings.get("will_press", 0)) > 0 or int(buildings.get("dread_foundry", 0)) > 0 or int(buildings.get("spire_foundry", 0)) > 0:
+		harvest_score += 1
+	if nurture_score > harvest_score:
+		trigger_ending("nurture_circle", "score n=%d h=%d" % [nurture_score, harvest_score])
+	else:
+		trigger_ending("harvest_dominion", "score n=%d h=%d" % [nurture_score, harvest_score])
+
+func trigger_ending(id: String, reason: String = "") -> void:
+	if game_ended:
+		return
+	if ending_data.is_empty():
+		_load_endings_data()
+	var def: Dictionary = ending_data.get(id, {})
+	if def.is_empty():
+		# Fallback stubs so headless still works if JSON missing
+		def = {"id": id, "outcome": "lose" if id == "collapse_ash" else "win", "title": id, "badge": id, "body": "The ash settles.", "legacy": ""}
+	game_ended = true
+	ending_id = id
+	ending_outcome = str(def.get("outcome", "win"))
+	is_paused = true
+	time_scale = 0.0
+	flags["ending_reason"] = reason
+	add_memory("ending_" + id, {"outcome": ending_outcome, "reason": reason})
+	var title: String = str(def.get("title", id))
+	var body: String = str(def.get("body", ""))
+	_log("--- " + title + " ---", "revelation")
+	if body != "":
+		_log(body, "story")
+	var legacy: String = str(def.get("legacy", ""))
+	if legacy != "":
+		_log(legacy, "revelation")
+	GameEvents.ending_reached.emit(ending_id, ending_outcome)
+	GameEvents.sfx_cue.emit("reframe_sting", {"ending": ending_id, "outcome": ending_outcome, "strength": 1.0})
+	GameEvents.available_actions_changed.emit()
+	save_game()
+
+func get_ending_info() -> Dictionary:
+	if ending_id == "" or not ending_data.has(ending_id):
+		return {}
+	var info: Dictionary = ending_data[ending_id].duplicate(true)
+	info["claims"] = _claim_count()
+	info["nurture_tally"] = path_moral_nurture
+	info["harvest_tally"] = path_moral_harvest
+	info["early_choice"] = early_choice
+	info["alignment"] = alignment
+	info["population"] = population
+	info["play_time"] = total_play_time
+	return info
+
+# End R3 ending reckoning
+
 # End accelerated helpers
 
 func save_game(slot: String = "auto") -> void:
@@ -1812,6 +1988,11 @@ func save_game(slot: String = "auto") -> void:
 		# Polish early choice state (for persistent delayed reframes across sessions)
 		"early_choice": early_choice,
 		"choice_history": choice_history,
+		"game_ended": game_ended,
+		"ending_id": ending_id,
+		"ending_outcome": ending_outcome,
+		"path_moral_nurture": path_moral_nurture,
+		"path_moral_harvest": path_moral_harvest,
 		# path_data is always from data/paths.json on load, not persisted
 	}
 	var path: String = "user://save_%s.json" % slot
@@ -1870,6 +2051,11 @@ func load_game(slot: String = "auto") -> bool:
 	var _ch: Array = data.get("choice_history", [])
 	for item in _ch:
 		choice_history.append(item)
+	game_ended = bool(data.get("game_ended", false))
+	ending_id = str(data.get("ending_id", ""))
+	ending_outcome = str(data.get("ending_outcome", ""))
+	path_moral_nurture = int(data.get("path_moral_nurture", 0))
+	path_moral_harvest = int(data.get("path_moral_harvest", 0))
 
 	# Accelerated: restore production and Memory
 	production_queue.clear()
@@ -1931,5 +2117,16 @@ func reset_to_new_game() -> void:
 	# Polish: clear choice memory on full reset
 	early_choice = ""
 	choice_history.clear()
+	game_ended = false
+	ending_id = ""
+	ending_outcome = ""
+	path_moral_nurture = 0
+	path_moral_harvest = 0
 	# Re-init (will call _load_paths_data + _load_or_init fresh)
 	_ready()
+
+
+
+
+
+

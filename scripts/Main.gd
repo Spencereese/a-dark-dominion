@@ -32,6 +32,7 @@ var _choice_time_was_paused_by_prompt: bool = false
 var map_panel: PanelContainer = null
 var map_view: Node = null  # instance of scenes/OutlandsMap.tscn (Node2D)
 var memory_panel: PanelContainer = null
+var ending_panel: Control = null  # R3: full-screen WIN/LOSE overlay
 var memory_content: VBoxContainer = null
 
 # Simple events UI: notification popup/banner for Ash Whispers (or map icon). Transient, high-contrast, fits austere style.
@@ -71,6 +72,7 @@ func _ready() -> void:
 	GameEvents.choice_offered.connect(_on_choice_offered)
 	GameEvents.choice_resolved.connect(_on_choice_resolved)
 	GameEvents.raid_occurred.connect(_on_raid_occurred)
+	GameEvents.ending_reached.connect(_on_ending_reached)
 	GameEvents.sfx_cue.connect(_on_sfx_cue)
 	GameEvents.whisper_triggered.connect(_on_whisper_triggered)
 	GameEvents.whisper_expired.connect(_on_whisper_expired)
@@ -81,7 +83,7 @@ func _ready() -> void:
 	_setup_placeholder_art()  # load ash bg + pulsing ember visual from assets/art (placeholders)
 	_setup_audio()  # sparse placeholder tones + buses; hooks via signals for nurture/gather/raid/choice
 
-	# Initial welcome if needed (GameState already logged some) — polished to ash/ember (no room/fire remnant)
+	# Initial welcome if needed (GameState already logged some) Ã¢â‚¬â€ polished to ash/ember (no room/fire remnant)
 	if log_label.get_parsed_text().strip_edges() == "":
 		var txt: String = "The ash is vast and silent. Embers lie scattered like forgotten sparks."
 		if NarrativeSystem:
@@ -101,6 +103,8 @@ func _ready() -> void:
 	_refresh_memories()
 	call_deferred("_refresh_actions")
 	call_deferred("_refresh_choice_prompt")
+	if GameState != null and GameState.game_ended:
+		call_deferred("_ensure_ending_overlay")
 
 func _setup_initial_ui() -> void:
 	# Dark theme enforcement (can be improved with real Theme later)
@@ -604,7 +608,7 @@ func _refresh_resources_display() -> void:
 		child.queue_free()
 
 	# At the absolute start (complete darkness, no awareness yet): hide all numbers, resources, pop counts.
-	# This keeps the mystery — the player doesn't yet "know" there are shards, rates, or "the lost".
+	# This keeps the mystery Ã¢â‚¬â€ the player doesn't yet "know" there are shards, rates, or "the lost".
 	# The first Nurture action will advance phase, after which the systems reveal gradually.
 	if GameState.phase == "dark" and GameState.population == 0 and GameState.resources.get("shards", 0.0) < 0.5:
 		var vague: Label = Label.new()
@@ -940,6 +944,9 @@ func _on_speed_pressed(btn: Button) -> void:
 			memory_panel.queue_free()
 			memory_panel = null
 			memory_content = null
+		if ending_panel and is_instance_valid(ending_panel):
+			ending_panel.queue_free()
+			ending_panel = null
 		_refresh_resources_display()
 		_refresh_actions()
 		_refresh_choice_prompt()
@@ -1257,7 +1264,7 @@ func _on_map_dispatch_requested(path_id: String, choice: String) -> void:
 	_refresh_map()
 
 func _on_map_moral_choice_offered(path_id: String, options: Array) -> void:
-	# Map click offered moral choices — do NOT auto-pick. Show clickable buttons in the map panel.
+	# Map click offered moral choices Ã¢â‚¬â€ do NOT auto-pick. Show clickable buttons in the map panel.
 	GameEvents.log_message.emit("The ash waits on the " + path_id.replace("_", " ") + ". Choose how they walk it.", "story")
 	_show_map_path_choices(path_id, options)
 	_refresh_outlands()
@@ -1676,7 +1683,7 @@ func _ensure_whisper_banner() -> void:
 
 	# Close button for popup control (right aligned simple)
 	var close: Button = Button.new()
-	close.text = "×"
+	close.text = "Ãƒâ€”"
 	close.custom_minimum_size = Vector2(22, 18)
 	close.add_theme_font_size_override("font_size", 11)
 	close.pressed.connect(_hide_whisper_banner)
@@ -1710,3 +1717,162 @@ func _update_whisper_banner(delta: float) -> void:
 			_hide_whisper_banner()
 	# (No auto re-show to avoid spam; player sees via map icon + log + initial banner popup. State query available via get_active_whispers for future.)
 
+
+
+
+# === R3 Ending overlay (nurture vs harvest WIN / collapse LOSE) ===
+
+func _on_ending_reached(ending_id: String, outcome: String) -> void:
+	_ensure_ending_overlay()
+	_play_choice_cue(true, (0.2 if outcome == "win" else -0.2))
+	_refresh_actions()
+	_update_status()
+
+func _ensure_ending_overlay() -> void:
+	if GameState == null or not GameState.game_ended:
+		return
+	if ending_panel != null and is_instance_valid(ending_panel):
+		ending_panel.show()
+		_refresh_ending_overlay()
+		return
+	ending_panel = Control.new()
+	ending_panel.name = "EndingOverlay"
+	ending_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ending_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	ending_panel.z_index = 80
+	var dim := ColorRect.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.02, 0.015, 0.025, 0.82)
+	ending_panel.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ending_panel.add_child(center)
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(520, 360)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.045, 0.055, 0.98)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.45, 0.32, 0.22, 1)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_right = 8
+	style.corner_radius_bottom_left = 8
+	style.content_margin_left = 20
+	style.content_margin_right = 20
+	style.content_margin_top = 18
+	style.content_margin_bottom = 18
+	card.add_theme_stylebox_override("panel", style)
+	center.add_child(card)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	card.add_child(vbox)
+	var badge := Label.new()
+	badge.name = "EndingBadge"
+	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	badge.add_theme_font_size_override("font_size", 18)
+	vbox.add_child(badge)
+	var title := Label.new()
+	title.name = "EndingTitle"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 28)
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(title)
+	var body := RichTextLabel.new()
+	body.name = "EndingBody"
+	body.bbcode_enabled = true
+	body.fit_content = true
+	body.scroll_active = false
+	body.custom_minimum_size = Vector2(460, 120)
+	vbox.add_child(body)
+	var stats := Label.new()
+	stats.name = "EndingStats"
+	stats.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stats.add_theme_font_size_override("font_size", 13)
+	stats.modulate = Color(0.75, 0.7, 0.65)
+	vbox.add_child(stats)
+	var legacy := RichTextLabel.new()
+	legacy.name = "EndingLegacy"
+	legacy.bbcode_enabled = true
+	legacy.fit_content = true
+	legacy.scroll_active = false
+	legacy.custom_minimum_size = Vector2(460, 40)
+	vbox.add_child(legacy)
+	var btn := Button.new()
+	btn.name = "EndingRestart"
+	btn.text = "Begin Again (Reset)"
+	btn.custom_minimum_size = Vector2(0, 36)
+	btn.pressed.connect(_on_ending_restart_pressed)
+	vbox.add_child(btn)
+	add_child(ending_panel)
+	_refresh_ending_overlay()
+
+func _refresh_ending_overlay() -> void:
+	if ending_panel == null or not is_instance_valid(ending_panel) or GameState == null:
+		return
+	var info: Dictionary = {}
+	if GameState.has_method("get_ending_info"):
+		info = GameState.get_ending_info()
+	var outcome: String = str(info.get("outcome", GameState.ending_outcome))
+	var badge_l: Label = ending_panel.find_child("EndingBadge", true, false) as Label
+	var title_l: Label = ending_panel.find_child("EndingTitle", true, false) as Label
+	var body_l: RichTextLabel = ending_panel.find_child("EndingBody", true, false) as RichTextLabel
+	var stats_l: Label = ending_panel.find_child("EndingStats", true, false) as Label
+	var legacy_l: RichTextLabel = ending_panel.find_child("EndingLegacy", true, false) as RichTextLabel
+	var badge_txt: String = str(info.get("badge", outcome.to_upper()))
+	if badge_l:
+		badge_l.text = badge_txt
+		if outcome == "win":
+			badge_l.modulate = Color(0.85, 0.75, 0.35)
+		else:
+			badge_l.modulate = Color(0.85, 0.35, 0.3)
+	if title_l:
+		title_l.text = str(info.get("title", GameState.ending_id))
+	if body_l:
+		body_l.text = "[center]" + str(info.get("body", "")) + "[/center]"
+	if stats_l:
+		stats_l.text = "Weight: %.2f  |  Early choice: %s  |  Claims: %s  |  Path morals N/H: %s/%s  |  Pop: %s" % [
+			float(info.get("alignment", GameState.alignment)),
+			str(info.get("early_choice", GameState.early_choice)),
+			str(info.get("claims", 0)),
+			str(info.get("nurture_tally", 0)),
+			str(info.get("harvest_tally", 0)),
+			str(info.get("population", GameState.population))
+		]
+	if legacy_l:
+		var leg: String = str(info.get("legacy", ""))
+		if leg != "":
+			legacy_l.text = "[center][i]" + leg + "[/i][/center]"
+		else:
+			legacy_l.text = ""
+
+func _on_ending_restart_pressed() -> void:
+	# Reuse Reset path so panels rebuild cleanly
+	GameState.reset_to_new_game()
+	log_label.clear()
+	if outlands_panel and is_instance_valid(outlands_panel):
+		outlands_panel.queue_free()
+		outlands_panel = null
+		outlands_content = null
+	if choice_prompt_panel and is_instance_valid(choice_prompt_panel):
+		choice_prompt_panel.queue_free()
+		choice_prompt_panel = null
+		choice_prompt_content = null
+	if map_panel and is_instance_valid(map_panel):
+		map_panel.queue_free()
+		map_panel = null
+		map_view = null
+	if memory_panel and is_instance_valid(memory_panel):
+		memory_panel.queue_free()
+		memory_panel = null
+		memory_content = null
+	if ending_panel and is_instance_valid(ending_panel):
+		ending_panel.queue_free()
+		ending_panel = null
+	_refresh_resources_display()
+	_refresh_actions()
+	_refresh_choice_prompt()
+	_update_status()
+	_update_ember_visual()

@@ -1,0 +1,26 @@
+{
+  "nurture_circle": {
+    "id": "nurture_circle",
+    "outcome": "win",
+    "title": "The Circle Remembers",
+    "badge": "WIN — NURTURE",
+    "body": "You claimed the veins without closing every door. The lost who walked them returned carrying songs, not silence alone. The ember holds — fragile, listening. Whatever dominion waits beyond this ash, it will remember that you opened the havens first.",
+    "legacy": "What will the next wanderer find? Warmth along the lines. A circle that still knows how to open."
+  },
+  "harvest_dominion": {
+    "id": "harvest_dominion",
+    "outcome": "win",
+    "title": "The Dominion Closes",
+    "badge": "WIN — HARVEST",
+    "body": "You cut and claimed. The veins yield. Eyes go quiet the way they did at the first haven. The ash bows under a firm will — and the pulse answers louder for it. This is dominion: not sudden, but the shape you taught from the first demand.",
+    "legacy": "What will the next wanderer find? Bound hands. Lines already marked. An ember that expects obedience."
+  },
+  "collapse_ash": {
+    "id": "collapse_ash",
+    "outcome": "lose",
+    "title": "Ash Claims the Ember",
+    "badge": "LOSE — COLLAPSE",
+    "body": "The circle fails. The pulse guttered, or the veins took back everyone who walked them. You wake again — or something like waking — in dark ash with no memory of how you got here. The cycle does not care which weight you chose.",
+    "legacy": "What will the next wanderer find? Scattered embers. No circle. The same first choice waiting."
+  }
+}
