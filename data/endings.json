@@ -22,5 +22,29 @@
     "badge": "LOSE — COLLAPSE",
     "body": "The circle fails. The pulse guttered, or the veins took back everyone who walked them. You wake again — or something like waking — in dark ash with no memory of how you got here. The cycle does not care which weight you chose.",
     "legacy": "What will the next wanderer find? Scattered embers. No circle. The same first choice waiting."
+  },
+  "true_echo": {
+    "id": "true_echo",
+    "outcome": "win",
+    "title": "The True Echo",
+    "badge": "WIN — TRUE",
+    "body": "You never taught the ash to demand. You sheltered, you listened, you raised a place where voices answer voices. Along the veins the Bound are not Bound — they are a choir that chose to stay. The pulse does not obey you. It answers. That difference is the hidden ending the ash keeps for those who refuse the easy will.",
+    "legacy": "What will the next wanderer find? An open gate that asks nothing. Echoes that remember mercy as architecture."
+  },
+  "sparse_hearth": {
+    "id": "sparse_hearth",
+    "outcome": "win",
+    "title": "The Sparse Hearth",
+    "badge": "WIN — MINIMAL",
+    "body": "You claimed the veins and left the ash almost bare of walls. No foundry, no binder, no choir of stone — only the ember and the few who walked with you. The builder would not leave in disgust; there was little to abandon. The circle holds because it stayed small enough to know every face.",
+    "legacy": "What will the next wanderer find? A thin fire. Few marks on the ash. A challenge written in absence."
+  },
+  "pyrrhic_crown": {
+    "id": "pyrrhic_crown",
+    "outcome": "win",
+    "title": "The Pyrrhic Crown",
+    "badge": "WIN — TRAGIC",
+    "body": "The veins are yours. The ash answers your will. And the hearth is nearly empty — the lost spent on the claiming, the silence you taught finally complete. You win the world the way a fire wins a room: everything that could burn has burned. The crown fits. There is almost no one left to see it.",
+    "legacy": "What will the next wanderer find? Marked lines. A throne of ash. A pulse that remembers the cost of winning."
   }
 }

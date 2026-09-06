@@ -77,7 +77,11 @@ func _run_tests() -> void:
 		_fail("endings.json failed")
 	else:
 		_ok("endings.json (%d endings)" % endings_data.keys().size())
-		for eid in ["nurture_circle", "harvest_dominion", "collapse_ash"]:
+		if endings_data.keys().size() >= 6:
+			_ok("endings catalog size >= 6")
+		else:
+			_fail("endings catalog too small: %d" % endings_data.keys().size())
+		for eid in ["nurture_circle", "harvest_dominion", "collapse_ash", "true_echo", "sparse_hearth", "pyrrhic_crown"]:
 			if endings_data.has(eid):
 				_ok("ending present: " + eid)
 			else:
@@ -469,6 +473,8 @@ func _run_tests() -> void:
 	else:
 		_ok("ending_data loaded (%d)" % gs.ending_data.keys().size())
 
+	# R7: raise a Haven so nurture_circle is not stolen by sparse_hearth (built_count==0)
+	gs.buildings["haven"] = 1
 	# Claim two veins with listen (nurture) morals
 	var pids: Array = []
 	if gs.path_data:
@@ -892,13 +898,133 @@ func _run_tests() -> void:
 
 	var bd6: Dictionary = _load_json("res://data/buildings.json")
 	var ed6: Dictionary = _load_json("res://data/endings.json")
-	if bd6.has("echo_choir") and bd6.has("ash_binder") and ed6.has("nurture_circle"):
-		_ok("faction + endings data intact after R6")
+	if bd6.has("echo_choir") and bd6.has("ash_binder") and ed6.has("nurture_circle") and ed6.has("true_echo") and ed6.has("sparse_hearth") and ed6.has("pyrrhic_crown"):
+		_ok("faction + Phase-5 endings data intact after R7")
 	else:
-		_fail("prior-round data missing after R6")
+		_fail("prior-round / R7 ending data missing")
 
+	# --- R7 Phase-5 special endings ---
+	print("Simulating R7 special endings (true_echo / sparse_hearth / pyrrhic_crown)...")
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	var r7_pids: Array = []
+	if gs.path_data:
+		for pid in gs.path_data.keys():
+			r7_pids.append(str(pid))
+	if r7_pids.size() < 2:
+		_fail("need >=2 paths for R7 ending sims")
+	else:
+		# --- true_echo ---
+		gs.phase = "outlands"
+		gs.flags["outlands_reached"] = true
+		gs.early_choice = "shelter"
+		gs.alignment = 0.4
+		gs.population = 8
+		gs.ember_pulse = 6.0
+		gs.game_ended = false
+		gs.ending_id = ""
+		gs.ending_outcome = ""
+		gs.path_moral_nurture = 2
+		gs.path_moral_harvest = 0
+		gs.path_claims = {}
+		gs.buildings = {"echo_choir": 1}
+		gs.flags["demand_more_policy"] = false
+		gs.memory_entries.clear()
+		if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+			gs._load_endings_data()
+		gs.path_claims[str(r7_pids[0])] = true
+		gs.path_claims[str(r7_pids[1])] = true
+		gs._check_ending_conditions("force")
+		if gs.game_ended and gs.ending_id == "true_echo" and gs.ending_outcome == "win":
+			_ok("true_echo WIN ending fired")
+		else:
+			_fail("expected true_echo win, got " + str(gs.ending_id) + "/" + str(gs.ending_outcome))
+
+		# --- sparse_hearth ---
+		gs.game_ended = false
+		gs.ending_id = ""
+		gs.ending_outcome = ""
+		gs.early_choice = "shelter"
+		gs.alignment = 0.2
+		gs.population = 6
+		gs.ember_pulse = 5.0
+		gs.path_moral_nurture = 2
+		gs.path_moral_harvest = 0
+		gs.buildings = {}
+		gs.flags["demand_more_policy"] = false
+		gs.path_claims = {}
+		gs.path_claims[str(r7_pids[0])] = true
+		gs.path_claims[str(r7_pids[1])] = true
+		gs.memory_entries.clear()
+		gs._check_ending_conditions("force")
+		if gs.game_ended and gs.ending_id == "sparse_hearth" and gs.ending_outcome == "win":
+			_ok("sparse_hearth WIN ending fired")
+		else:
+			_fail("expected sparse_hearth win, got " + str(gs.ending_id) + "/" + str(gs.ending_outcome))
+
+		# --- pyrrhic_crown ---
+		gs.game_ended = false
+		gs.ending_id = ""
+		gs.ending_outcome = ""
+		gs.early_choice = "demand"
+		gs.alignment = -0.35
+		gs.population = 2
+		gs.ember_pulse = 4.0
+		gs.path_moral_nurture = 0
+		gs.path_moral_harvest = 2
+		gs.buildings = {"ash_binder": 1}
+		gs.flags["demand_more_policy"] = true
+		gs.path_claims = {}
+		gs.path_claims[str(r7_pids[0])] = true
+		gs.path_claims[str(r7_pids[1])] = true
+		gs.memory_entries.clear()
+		gs._check_ending_conditions("force")
+		if gs.game_ended and gs.ending_id == "pyrrhic_crown" and gs.ending_outcome == "win":
+			_ok("pyrrhic_crown WIN ending fired")
+		else:
+			_fail("expected pyrrhic_crown win, got " + str(gs.ending_id) + "/" + str(gs.ending_outcome) + " pop=" + str(gs.population))
+
+		# --- harvest_dominion still wins when pop healthy ---
+		gs.game_ended = false
+		gs.ending_id = ""
+		gs.ending_outcome = ""
+		gs.early_choice = "demand"
+		gs.alignment = -0.35
+		gs.population = 8
+		gs.ember_pulse = 4.0
+		gs.path_moral_nurture = 0
+		gs.path_moral_harvest = 2
+		gs.buildings = {"ash_binder": 1, "haven": 1}
+		gs.flags["demand_more_policy"] = true
+		gs.path_claims = {}
+		gs.path_claims[str(r7_pids[0])] = true
+		gs.path_claims[str(r7_pids[1])] = true
+		gs._check_ending_conditions("force")
+		if gs.game_ended and gs.ending_id == "harvest_dominion" and gs.ending_outcome == "win":
+			_ok("harvest_dominion still fires at healthy pop")
+		else:
+			_fail("expected harvest_dominion at healthy pop, got " + str(gs.ending_id))
+
+		# Memory text for new endings via trigger
+		gs.game_ended = false
+		gs.ending_id = ""
+		gs.memory_entries.clear()
+		gs.early_choice = "shelter"
+		if gs.ending_data.is_empty() and gs.has_method("_load_endings_data"):
+			gs._load_endings_data()
+		gs.trigger_ending("true_echo", "headless memory")
+		var mem_true: bool = false
+		for e in gs.memory_entries:
+			if str(e.get("key", "")) == "ending_true_echo":
+				mem_true = true
+				break
+		if mem_true:
+			_ok("memory_entries has ending_true_echo")
+		else:
+			_fail("memory missing ending_true_echo")
 
 	_finish()
+
 
 func _finish() -> void:
 	print("=== Headless Test Complete ===")

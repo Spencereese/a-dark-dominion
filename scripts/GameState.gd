@@ -180,7 +180,7 @@ func _load_action_data() -> void:
 
 
 func _load_endings_data() -> void:
-	# R3: data-driven ending catalog (nurture win / harvest win / collapse lose)
+	# R3/R7: data-driven Phase-5 ending catalog (6 variants)
 	var path: String = "res://data/endings.json"
 	if ResourceLoader.exists(path):
 		var text: String = FileAccess.get_file_as_string(path)
@@ -1992,6 +1992,12 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 			base = "Memory closes on a closed fist. You harvested what the veins would give. The first haven choice (" + choice + ") named the shape of this dominion."
 		elif eid == "collapse_ash":
 			base = "Memory scatters. The ember failed, or the veins took everyone. The cycle does not keep score of nurture or harvest — only of ash."
+		elif eid == "true_echo":
+			base = "Memory closes on a true echo. You never demanded more than the circle could give. The first haven choice (" + choice + ") became architecture that listens back."
+		elif eid == "sparse_hearth":
+			base = "Memory closes on a sparse hearth. You claimed the veins without raising the ash into walls. The first haven choice (" + choice + ") kept the circle small enough to know."
+		elif eid == "pyrrhic_crown":
+			base = "Memory closes on a pyrrhic crown. You won the veins and spent the circle doing it. The first haven choice (" + choice + ") named a dominion almost no one remains to serve."
 		else:
 			base = "An ending settles (" + eid + " / " + outcome + "). The ash keeps the pattern of " + choice + "."
 	elif event_key.begins_with("faction_unlock_"):
@@ -2155,7 +2161,7 @@ func get_current_narrative_context() -> Dictionary:
 	return ctx
 
 
-# === R3 Ending reckoning (nurture vs harvest + collapse) ===
+# === R3/R7 Ending reckoning (Phase-5 catalog: 6 endings) ===
 
 func _claim_count() -> int:
 	var n: int = 0
@@ -2164,10 +2170,17 @@ func _claim_count() -> int:
 			n += 1
 	return n
 
+func _built_count() -> int:
+	# Total raised structures (minimalist / sparse ending gate)
+	var n: int = 0
+	for k in buildings.keys():
+		n += int(buildings[k])
+	return n
+
 func _tally_path_moral(option_id: String, align_delta: float) -> void:
 	# Classify expedition moral: positive / listen/mend = nurture; negative / harvest/cut/claim = harvest
 	var oid: String = option_id.to_lower()
-	var nurture_keys: Array = ["listen", "mend", "offer", "shelter", "passage", "ward"]
+	var nurture_keys: Array = ["listen", "mend", "offer", "shelter", "passage", "ward", "respect", "parley"]
 	var harvest_keys: Array = ["harvest", "cut", "claim", "demand", "seal", "press", "force"]
 	var is_nurture: bool = false
 	var is_harvest: bool = false
@@ -2194,23 +2207,7 @@ func _tally_path_moral(option_id: String, align_delta: float) -> void:
 		else:
 			path_moral_harvest += 1
 
-func _check_ending_conditions(source: String = "") -> void:
-	if game_ended:
-		return
-	# Lose first: circle collapses
-	if phase == "outlands" or _claim_count() > 0:
-		if population <= 0:
-			trigger_ending("collapse_ash", "population wiped (%s)" % source)
-			return
-		if ember_pulse <= 0.0 and _claim_count() >= 1 and total_play_time > 30.0:
-			trigger_ending("collapse_ash", "ember died (%s)" % source)
-			return
-	# Win reckoning: enough veins claimed + early moral choice recorded
-	if early_choice == "" or _claim_count() < ENDING_CLAIM_THRESHOLD:
-		return
-	# Prefer firing on path_claim (session beat); allow tick only if somehow missed
-	if source != "path_claim" and source != "force":
-		return
+func _compute_ending_scores() -> Dictionary:
 	var nurture_score: int = path_moral_nurture
 	var harvest_score: int = path_moral_harvest
 	if early_choice == "shelter":
@@ -2230,6 +2227,44 @@ func _check_ending_conditions(source: String = "") -> void:
 		nurture_score += 1
 	if int(buildings.get("will_press", 0)) > 0 or int(buildings.get("dread_foundry", 0)) > 0 or int(buildings.get("spire_foundry", 0)) > 0 or int(buildings.get("ash_binder", 0)) > 0:
 		harvest_score += 1
+	return {"nurture": nurture_score, "harvest": harvest_score}
+
+func _has_nurture_faction_building() -> bool:
+	return int(buildings.get("echo_choir", 0)) > 0 or int(buildings.get("sanctuary_ward", 0)) > 0 or int(buildings.get("vein_ward", 0)) > 0 or int(buildings.get("resonance_spire", 0)) > 0
+
+func _check_ending_conditions(source: String = "") -> void:
+	if game_ended:
+		return
+	# Lose first: circle collapses
+	if phase == "outlands" or _claim_count() > 0:
+		if population <= 0:
+			trigger_ending("collapse_ash", "population wiped (%s)" % source)
+			return
+		if ember_pulse <= 0.0 and _claim_count() >= 1 and total_play_time > 30.0:
+			trigger_ending("collapse_ash", "ember died (%s)" % source)
+			return
+	# Win reckoning: enough veins claimed + early moral choice recorded
+	if early_choice == "" or _claim_count() < ENDING_CLAIM_THRESHOLD:
+		return
+	# Prefer firing on path_claim (session beat); allow tick only if somehow missed
+	if source != "path_claim" and source != "force":
+		return
+	var scores: Dictionary = _compute_ending_scores()
+	var nurture_score: int = int(scores["nurture"])
+	var harvest_score: int = int(scores["harvest"])
+	# R7 special endings (priority before binary nurture/harvest)
+	# Hidden / True: never Demand More, shelter-first, no harvest tallies, nurture architecture present
+	if early_choice == "shelter" and not flags.get("demand_more_policy", false) and path_moral_harvest == 0 and alignment >= 0.28 and _has_nurture_faction_building() and nurture_score > harvest_score:
+		trigger_ending("true_echo", "true n=%d h=%d align=%.2f" % [nurture_score, harvest_score, alignment])
+		return
+	# No-Huts / Minimalist: nurture-leaning win with nothing raised on the ash
+	if _built_count() == 0 and nurture_score > harvest_score and population >= 4:
+		trigger_ending("sparse_hearth", "sparse n=%d h=%d built=0" % [nurture_score, harvest_score])
+		return
+	# Pyrrhic / Tragic: harvest dominion while the circle is nearly emptied
+	if harvest_score >= nurture_score and population > 0 and population <= 2:
+		trigger_ending("pyrrhic_crown", "pyrrhic n=%d h=%d pop=%d" % [nurture_score, harvest_score, population])
+		return
 	if nurture_score > harvest_score:
 		trigger_ending("nurture_circle", "score n=%d h=%d" % [nurture_score, harvest_score])
 	else:
@@ -2543,6 +2578,13 @@ func _apply_memory_shard_carry() -> void:
 		alignment = clamp(alignment - 0.05, -1.0, 1.0)
 	elif prior_end == "collapse_ash":
 		ember_pulse = max(ember_pulse, 0.5)
+	elif prior_end == "true_echo":
+		alignment = clamp(alignment + 0.08, -1.0, 1.0)
+	elif prior_end == "sparse_hearth":
+		alignment = clamp(alignment + 0.03, -1.0, 1.0)
+	elif prior_end == "pyrrhic_crown":
+		alignment = clamp(alignment - 0.03, -1.0, 1.0)
+		ember_pulse = max(ember_pulse, 0.4)
 	flags["ng_plus"] = true
 	flags["ng_plus_from_ending"] = prior_end
 	add_memory("ng_plus_memory_shard", {
