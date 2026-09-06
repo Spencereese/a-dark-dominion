@@ -109,6 +109,20 @@ func _run_tests() -> void:
 					_fail("raid option missing: " + oid)
 		else:
 			_fail("path_raid missing from raids.json")
+	var towers_data: Dictionary = _load_json("res://data/towers.json")
+	if towers_data.is_empty():
+		_fail("towers.json failed")
+	else:
+		_ok("towers.json (%d profiles)" % towers_data.keys().size())
+		for tid in ["watch_bolt", "dread_spike", "ward_pulse"]:
+			if towers_data.has(tid):
+				var tp = towers_data[tid]
+				if float(tp.get("push", 0.0)) > 0.0 and float(tp.get("credit", 0.0)) > 0.0:
+					_ok("tower profile ok: " + tid)
+				else:
+					_fail("tower profile incomplete: " + tid)
+			else:
+				_fail("tower profile missing: " + tid)
 
 	# --- Scenes ---
 	print("Checking scenes...")
@@ -1022,6 +1036,135 @@ func _run_tests() -> void:
 			_ok("memory_entries has ending_true_echo")
 		else:
 			_fail("memory missing ending_true_echo")
+
+	# --- R8 Projectile towers / lane combat credit ---
+	print("Simulating R8 projectile towers + lane combat credit...")
+	if gs.has_method("reset_to_new_game"):
+		gs.reset_to_new_game()
+	if gs.tower_data.is_empty() and gs.has_method("_load_tower_data"):
+		gs._load_tower_data()
+	if gs.tower_data.has("watch_bolt") and gs.tower_data.has("dread_spike") and gs.tower_data.has("ward_pulse"):
+		_ok("GameState.tower_data loaded 3 profiles")
+	else:
+		_fail("GameState.tower_data incomplete: " + str(gs.tower_data.keys()))
+	if not gs.has_method("get_tower_profile_for_vein") or not gs.has_method("register_tower_hit") or not gs.has_method("get_lane_combat_bonus"):
+		_fail("R8 tower combat methods missing")
+	else:
+		_ok("R8 tower combat methods present")
+
+	# Neutral / watch profile
+	gs.alignment = 0.0
+	gs.buildings = {"watch_spire": 1}
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	var neut: Dictionary = gs.get_tower_profile_for_vein("vein_of_fading_echoes")
+	if str(neut.get("id", "")) == "watch_bolt":
+		_ok("neutral vein uses watch_bolt")
+	else:
+		_fail("expected watch_bolt, got " + str(neut.get("id", "")))
+
+	# Tyrant / dread
+	gs.alignment = -0.4
+	gs.buildings = {"watch_spire": 1, "dread_foundry": 1}
+	var tyr: Dictionary = gs.get_tower_profile_for_vein("vein_of_fading_echoes")
+	if str(tyr.get("id", "")) == "dread_spike":
+		_ok("tyrant vein uses dread_spike")
+	else:
+		_fail("expected dread_spike, got " + str(tyr.get("id", "")))
+
+	# Benevolent / ward
+	gs.alignment = 0.35
+	gs.buildings = {"watch_spire": 1, "sanctuary_ward": 1}
+	var ben: Dictionary = gs.get_tower_profile_for_vein("vein_of_fading_echoes")
+	if str(ben.get("id", "")) == "ward_pulse":
+		_ok("benevolent vein uses ward_pulse")
+	else:
+		_fail("expected ward_pulse, got " + str(ben.get("id", "")))
+
+	# Hits accumulate credit and first-shot memory
+	gs.lane_combat_hits = 0
+	gs.lane_combat_credit = 0.0
+	gs.lane_combat_repels = 0
+	gs.memory_entries.clear()
+	gs.defense_strength = 1.0
+	gs.register_tower_hit("vein_of_fading_echoes", 0.5, false)
+	if gs.lane_combat_hits == 1 and gs.lane_combat_credit >= 0.5:
+		_ok("register_tower_hit credits lane combat")
+	else:
+		_fail("hit credit failed hits=%d credit=%.2f" % [gs.lane_combat_hits, gs.lane_combat_credit])
+	var mem_shot: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "lane_tower_first_shot":
+			mem_shot = true
+			break
+	if mem_shot:
+		_ok("memory_entries has lane_tower_first_shot")
+	else:
+		_fail("memory missing lane_tower_first_shot")
+
+	gs.register_tower_hit("vein_of_fading_echoes", 0.6, true)
+	if gs.lane_combat_repels == 1 and gs.defense_strength > 1.0:
+		_ok("repel bumps defense + repel count")
+	else:
+		_fail("repel failed repels=%d def=%.2f" % [gs.lane_combat_repels, gs.defense_strength])
+	var mem_repel: bool = false
+	for e in gs.memory_entries:
+		if str(e.get("key", "")) == "lane_tower_first_repel":
+			mem_repel = true
+			break
+	if mem_repel:
+		_ok("memory_entries has lane_tower_first_repel")
+	else:
+		_fail("memory missing lane_tower_first_repel")
+
+	# Lane bonus feeds raid encounter def_val then consumes on resolve
+	gs.pending_raid.clear()
+	gs.game_ended = false
+	gs.population = 8
+	gs.resources["shards"] = 40.0
+	gs.defense_strength = 0.5
+	gs.buildings = {"watch_spire": 1}
+	gs.lane_combat_credit = 3.0
+	var bonus_before: float = gs.get_lane_combat_bonus()
+	if bonus_before > 1.0:
+		_ok("get_lane_combat_bonus from credit (%.2f)" % bonus_before)
+	else:
+		_fail("lane bonus too low: %.2f" % bonus_before)
+	if not gs.offer_raid_encounter("vein_of_fading_echoes"):
+		_fail("offer_raid_encounter with lane bonus failed")
+	else:
+		var pend: Dictionary = gs.get_pending_raid()
+		var lb: float = float(pend.get("lane_bonus", 0.0))
+		var dv: float = float(pend.get("def_val", 0.0))
+		if lb > 1.0 and dv >= gs.defense_strength + lb:
+			_ok("pending raid includes lane_bonus=%.2f def_val=%.2f" % [lb, dv])
+		else:
+			_fail("pending missing lane bonus lb=%.2f def=%.2f" % [lb, dv])
+		var credit_before_resolve: float = gs.lane_combat_credit
+		var hold_res8: Dictionary = gs.resolve_raid_encounter("hold_watch")
+		if bool(hold_res8.get("ok", false)) and gs.lane_combat_credit < credit_before_resolve:
+			_ok("resolve consumed lane combat credit (%.2f -> %.2f)" % [credit_before_resolve, gs.lane_combat_credit])
+		else:
+			_fail("lane credit not consumed on resolve: " + str(hold_res8) + " credit=" + str(gs.lane_combat_credit))
+
+	# Vein defense includes tower / credit contrib
+	gs.path_claims = {"vein_of_fading_echoes": true}
+	gs.buildings = {"watch_spire": 1, "dread_foundry": 1}
+	gs.lane_combat_credit = 2.0
+	gs.defense_strength = 2.0
+	var vdef: float = gs.get_vein_defense_strength("vein_of_fading_echoes")
+	if vdef > 3.5:
+		_ok("get_vein_defense_strength includes tower/credit (%.2f)" % vdef)
+	else:
+		_fail("vein defense too low: %.2f" % vdef)
+
+	# Prior-round data still intact
+	var td8: Dictionary = _load_json("res://data/towers.json")
+	var rd8: Dictionary = _load_json("res://data/raids.json")
+	var ed8: Dictionary = _load_json("res://data/endings.json")
+	if td8.has("ward_pulse") and rd8.has("path_raid") and ed8.has("true_echo"):
+		_ok("R6/R7/R8 data intact together")
+	else:
+		_fail("cross-round data missing after R8")
 
 	_finish()
 

@@ -7,7 +7,7 @@ class_name OutlandsMap
 # Polls GameState (get_path_visual_data, get_path_progress, get_vein_defense_strength, path_claims, active_expeditions, alignment, defense_strength, ember_pulse, buildings, early_choice, production_queue).
 # Editor friendly: static Line2D veins in .tscn show even without run; @tool + mocks allow live preview.
 # Self-contained for later MapPanel instancing + update_from_gamestate() / focus_vein / dispatch_on_vein calls.
-# Enhanced: faction tower variants (dread spikes red vs ward glow green using buildings + align), production labor dots (bound_figure + anim on veins when queue labor/spire), click interaction offers moral dispatch (auto + signal + hint labels), raid thicker anim lines, binding fx with weight_accent, etc. API compat preserved.
+# Enhanced: faction tower variants + R8 projectile fire on lane raids, production labor dots, click moral dispatch, raid threat lines, binding fx. API compat preserved.
 
 signal vein_focused(path_id: String)
 signal dispatch_requested(path_id: String, choice: String)
@@ -49,6 +49,9 @@ var weight_accent_tex: Texture2D = null
 var labor_nodes: Dictionary = {}  # path_id -> Array[Node2D] small labor/builder sprites moving
 var production_active: Dictionary = {}  # path_id -> {"labor": bool, "spire": bool, "boost": float} for this refresh
 var raid_line_nodes: Dictionary = {}  # path_id -> Line2D for thicker/animated raid threat line (more visible movement)
+# R8 projectile towers: bolts travel along veins toward raid icons
+var projectile_nodes: Array = []  # [{node, path_id, speed, push, credit, target_frac}]
+var tower_fire_cd: Dictionary = {}  # path_id -> remaining cooldown seconds
 
 # Ash Whispers icons on map: for area-tied events, show pulsing notification icon (warm/echo marker) on the affected vein. Creative visual for "whisper from the ash" on that area.
 var whisper_nodes: Dictionary = {}  # path_id -> Node2D (simple pulsing marker for active whisper on that vein)
@@ -66,6 +69,8 @@ func _ready() -> void:
 	# Clear dynamic nodes for fresh (labor, raid lines, choice hints)
 	labor_nodes.clear()
 	raid_line_nodes.clear()
+	projectile_nodes.clear()
+	tower_fire_cd.clear()
 	production_active.clear()
 	whisper_nodes.clear()
 	_hide_choice_ui()
@@ -167,6 +172,7 @@ func _process(delta: float) -> void:
 	_update_pulse(delta)
 	_update_moving_entities(delta)
 	_update_raid_simulation(delta)
+	_update_tower_combat(delta)
 
 	_last_visual_update += delta
 	if _last_visual_update > 0.16 or Engine.is_editor_hint():
@@ -494,6 +500,148 @@ func _spawn_binding_accent_particles(pid: String, se: Array) -> void:
 		tw.tween_property(n, "modulate:a", 0.0, 1.1 + i*0.4).set_trans(Tween.TRANS_QUAD)
 		tw.tween_property(n, "position", ppos + (se[1]-se[0]).normalized()*8, 1.3)
 		tw.tween_callback(func(): if is_instance_valid(n): n.queue_free())
+
+func _update_tower_combat(delta: float) -> void:
+	# Tick cooldowns, fire at live raids, advance projectiles, apply push + GS credit.
+	for pid in tower_fire_cd.keys():
+		tower_fire_cd[pid] = max(0.0, float(tower_fire_cd.get(pid, 0.0)) - delta)
+
+	# Fire
+	for pid in tower_nodes.keys():
+		if not raid_progress.has(pid):
+			continue
+		var tnode: Polygon2D = tower_nodes.get(pid) as Polygon2D
+		if tnode == null or not is_instance_valid(tnode):
+			continue
+		var cd_left: float = float(tower_fire_cd.get(pid, 0.0))
+		if cd_left > 0.0:
+			continue
+		var raid_frac: float = float(raid_progress.get(pid, 0.0))
+		var prof: Dictionary = {}
+		if GameState and GameState.has_method("get_tower_profile_for_vein"):
+			prof = GameState.get_tower_profile_for_vein(pid)
+		else:
+			prof = {
+				"cooldown": 1.05,
+				"range_frac": 0.62,
+				"speed": 240.0,
+				"push": 0.085,
+				"credit": 0.35,
+				"color": [0.88, 0.78, 0.42, 0.95],
+				"size": 3.2,
+			}
+		var range_frac: float = float(prof.get("range_frac", 0.62))
+		# Tower sits ~0.67 along vein (hearth=0 outer=1). Engage when raid is within range inward of tower.
+		var tower_frac: float = 0.67
+		if abs(raid_frac - tower_frac) > range_frac and raid_frac > tower_frac + 0.02:
+			continue  # still too far out
+		_spawn_projectile(pid, tnode, raid_frac, prof)
+		tower_fire_cd[pid] = float(prof.get("cooldown", 1.05))
+
+	_advance_projectiles(delta)
+
+
+func _spawn_projectile(pid: String, tnode: Polygon2D, _raid_frac: float, prof: Dictionary) -> void:
+	var bolt := Polygon2D.new()
+	bolt.name = "Bolt_" + pid + "_" + str(projectile_nodes.size())
+	bolt.z_index = 4
+	var sz: float = float(prof.get("size", 3.2))
+	bolt.polygon = PackedVector2Array([
+		Vector2(-sz * 0.35, sz * 0.55),
+		Vector2(sz * 0.9, 0.0),
+		Vector2(-sz * 0.35, -sz * 0.55),
+	])
+	var col = prof.get("color", [0.88, 0.78, 0.42, 0.95])
+	if typeof(col) == TYPE_ARRAY and col.size() >= 3:
+		var a: float = float(col[3]) if col.size() > 3 else 0.95
+		bolt.color = Color(float(col[0]), float(col[1]), float(col[2]), a)
+	else:
+		bolt.color = Color(0.88, 0.78, 0.42, 0.95)
+	bolt.position = tnode.position
+	add_child(bolt)
+	projectile_nodes.append({
+		"node": bolt,
+		"path_id": pid,
+		"speed": float(prof.get("speed", 240.0)),
+		"push": float(prof.get("push", 0.085)),
+		"credit": float(prof.get("credit", 0.35)),
+		"life": 1.6,
+	})
+
+
+func _advance_projectiles(delta: float) -> void:
+	var remain: Array = []
+	for proj in projectile_nodes:
+		var node: Polygon2D = proj.get("node") as Polygon2D
+		var pid: String = str(proj.get("path_id", ""))
+		if node == null or not is_instance_valid(node):
+			continue
+		proj["life"] = float(proj.get("life", 1.0)) - delta
+		if float(proj["life"]) <= 0.0 or not raid_progress.has(pid):
+			node.queue_free()
+			continue
+		var se: Array = _get_vein_start_end(pid)
+		var raid_frac: float = clamp(float(raid_progress.get(pid, 0.0)), 0.0, 1.0)
+		var target: Vector2 = se[0].lerp(se[1], raid_frac)
+		var to_t: Vector2 = target - node.position
+		var dist: float = to_t.length()
+		var step: float = float(proj.get("speed", 240.0)) * delta
+		if dist <= max(6.0, step):
+			# Hit
+			node.position = target
+			_apply_projectile_hit(pid, float(proj.get("push", 0.085)), float(proj.get("credit", 0.35)), node.position)
+			node.queue_free()
+			continue
+		var dir: Vector2 = to_t / dist
+		node.position += dir * step
+		node.rotation = dir.angle()
+		remain.append(proj)
+	projectile_nodes = remain
+
+
+func _apply_projectile_hit(pid: String, push: float, credit: float, at: Vector2) -> void:
+	if not raid_progress.has(pid):
+		return
+	var before: float = float(raid_progress[pid])
+	var after: float = min(1.05, before + max(0.02, push))
+	var repelled: bool = false
+	if after >= 0.98:
+		# Pushed fully off the vein
+		raid_progress.erase(pid)
+		repelled = true
+		if raid_line_nodes.has(pid):
+			var rl: Line2D = raid_line_nodes[pid]
+			if is_instance_valid(rl):
+				rl.queue_free()
+			raid_line_nodes.erase(pid)
+		# brief hearth flash of relief
+		if hearth and is_instance_valid(hearth):
+			hearth.modulate = Color(0.95, 0.9, 0.55, 0.95)
+	else:
+		raid_progress[pid] = after
+	_spawn_hit_flash(at, repelled)
+	if GameState and GameState.has_method("register_tower_hit"):
+		GameState.register_tower_hit(pid, credit, repelled)
+
+
+func _spawn_hit_flash(at: Vector2, strong: bool) -> void:
+	var flash := Polygon2D.new()
+	flash.z_index = 5
+	var s: float = 5.5 if strong else 3.5
+	flash.polygon = PackedVector2Array([
+		Vector2(0, -s), Vector2(s * 0.7, 0), Vector2(0, s), Vector2(-s * 0.7, 0)
+	])
+	flash.color = Color(1.0, 0.92, 0.55, 0.85) if strong else Color(0.95, 0.7, 0.35, 0.7)
+	flash.position = at
+	add_child(flash)
+	var tw := create_tween()
+	tw.tween_property(flash, "modulate:a", 0.0, 0.28)
+	tw.parallel().tween_property(flash, "scale", Vector2(1.8, 1.8), 0.28)
+	tw.tween_callback(func():
+		if is_instance_valid(flash):
+			flash.queue_free()
+	)
+
 
 func _refresh_towers() -> void:
 	for pid in PATH_IDS:

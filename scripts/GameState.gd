@@ -60,6 +60,11 @@ var defense_strength: float = 0.0  # decays over time; built by Defend action + 
 # R6 raid/defense encounter (player-facing; pending until resolve_raid_encounter)
 var raid_data: Dictionary = {}  # loaded from data/raids.json
 var pending_raid: Dictionary = {}  # snapshot while encounter UI is open
+# R8 projectile towers / lane combat credit (map hits feed raid mitigation)
+var tower_data: Dictionary = {}  # loaded from data/towers.json
+var lane_combat_hits: int = 0  # lifetime hits this run (schematic TD)
+var lane_combat_credit: float = 0.0  # spends into next raid def_val; capped
+var lane_combat_repels: int = 0  # raids fully pushed off a vein by towers
 
 # Production queues labor (C&C flavor per approved plan): labor from completed halls auto/boost assigned to defense/expeditions (like foragers but from production)
 var production_labor: float = 0.0
@@ -123,6 +128,7 @@ func _ready() -> void:
 	_load_action_data()  # 100% data-driven actions
 	_load_endings_data()
 	_load_raid_data()
+	_load_tower_data()
 	_load_or_init()
 	# Seed some starting flavor if brand new
 	if resources["shards"] <= 0.1 and phase == "dark":
@@ -204,6 +210,26 @@ func _load_raid_data() -> void:
 			return
 	raid_data = {}
 	print("[GameState] WARN: raids.json missing or invalid")
+
+
+func _load_tower_data() -> void:
+	# R8: projectile tower profiles for schematic TD lanes
+	var path := "res://data/towers.json"
+	if not FileAccess.file_exists(path):
+		tower_data = {}
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if not file:
+		tower_data = {}
+		return
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if typeof(parsed) == TYPE_DICTIONARY:
+		tower_data = parsed
+		print("[GameState] Loaded tower data: ", tower_data.keys())
+	else:
+		tower_data = {}
+
 
 func _process(delta: float) -> void:
 	if is_paused or time_scale <= 0.0:
@@ -1317,11 +1343,13 @@ func offer_raid_encounter(path_id: String = "") -> bool:
 	var foragers: int = int(assigned.get("forager", 0))
 	var watch: int = int(buildings.get("watch_spire", 0))
 	var time_since_defend: float = total_play_time - last_path_defense
-	var def_val: float = defense_strength + (watch * 1.8) + (1.5 if time_since_defend < 75.0 else 0.0)
+	var lane_bonus: float = get_lane_combat_bonus()
+	var def_val: float = defense_strength + (watch * 1.8) + (1.5 if time_since_defend < 75.0 else 0.0) + lane_bonus
 	pending_raid = {
 		"raid_id": "path_raid",
 		"path_id": pid,
 		"def_val": def_val,
+		"lane_bonus": lane_bonus,
 		"foragers": foragers,
 		"offered_at": total_play_time,
 		"title": str(defn.get("title", "Ash Along the Veins")),
@@ -1349,6 +1377,10 @@ func resolve_raid_encounter(choice_id: String) -> Dictionary:
 	var snap: Dictionary = pending_raid.duplicate(true)
 	var raid_id: String = str(snap.get("raid_id", "path_raid"))
 	var def_val: float = float(snap.get("def_val", defense_strength))
+	# R8: spend projectile lane credit that was baked into this encounter
+	var spent_lane: float = float(snap.get("lane_bonus", 0.0))
+	if spent_lane > 0.0:
+		consume_lane_combat_bonus(spent_lane)
 	var foragers: int = int(snap.get("foragers", assigned.get("forager", 0)))
 	var opt: Dictionary = {}
 	var opts = snap.get("options", [])
@@ -2055,6 +2087,31 @@ func add_memory(event_key: String, extra: Dictionary = {}) -> void:
 		else:
 			base += ". The pulse remembers a shape you do not."
 		base += " The shard warms a few starting embers."
+	elif event_key == "lane_tower_first_shot":
+		var shot_path: String = str(extra.get("path_id", "a vein"))
+		if path_data.has(shot_path):
+			shot_path = str(path_data[shot_path].get("name", shot_path))
+		if choice == "shelter":
+			base = "A Watch Spire loosed its first bolt along " + shot_path + ". The shelter you first offered now answers with light on the veins."
+		elif choice == "demand":
+			base = "A Watch Spire loosed its first bolt along " + shot_path + ". The demand you taught at the havens now strikes the ash before it reaches the hearth."
+		elif choice == "seal":
+			base = "A Watch Spire loosed its first bolt along " + shot_path + ". The circle that learned to close now pushes the ash back with iron light."
+		else:
+			base = "A Watch Spire loosed its first bolt along " + shot_path + ". The schematic towers have begun to answer the raids."
+	elif event_key == "lane_tower_first_repel":
+		var repel_path: String = str(extra.get("path_id", "a vein"))
+		var hits_n: int = int(extra.get("hits", 0))
+		if path_data.has(repel_path):
+			repel_path = str(path_data[repel_path].get("name", repel_path))
+		if choice == "shelter":
+			base = "Tower fire drove the ash fully off " + repel_path + " (" + str(hits_n) + " hits). Mercy at the havens became a line that held."
+		elif choice == "demand":
+			base = "Tower fire drove the ash fully off " + repel_path + " (" + str(hits_n) + " hits). The will you first demanded now pushes raids into retreat."
+		elif choice == "seal":
+			base = "Tower fire drove the ash fully off " + repel_path + " (" + str(hits_n) + " hits). What the circle sealed, the bolts kept."
+		else:
+			base = "Tower fire drove the ash fully off " + repel_path + " (" + str(hits_n) + " hits). The lane combat credit now hardens the watch."
 
 	if base == "":
 		return  # unknown key: do not spam empty entries
@@ -2117,17 +2174,85 @@ func get_path_progress(path_id: String) -> float:
 			return clamp(prog, 0.0, 1.0)
 	return 0.0
 
+func get_tower_profile_for_vein(path_id: String = "") -> Dictionary:
+	# Pick projectile profile from towers.json using buildings + alignment (faction without labels).
+	if tower_data.is_empty():
+		_load_tower_data()
+	var has_dread: bool = int(buildings.get("dread_foundry", 0)) > 0 or int(buildings.get("ash_binder", 0)) > 0
+	var has_ward: bool = int(buildings.get("sanctuary_ward", 0)) > 0 or int(buildings.get("echo_choir", 0)) > 0
+	var pid_key: String = "watch_bolt"
+	if has_dread or alignment < -0.2:
+		pid_key = "dread_spike"
+	elif has_ward or alignment > 0.15:
+		pid_key = "ward_pulse"
+	var prof: Dictionary = tower_data.get(pid_key, {}).duplicate(true) if typeof(tower_data.get(pid_key, {})) == TYPE_DICTIONARY else {}
+	if prof.is_empty():
+		# Safe fallback if data missing
+		prof = {
+			"id": pid_key,
+			"label": "Watch Bolt",
+			"cooldown": 1.05,
+			"range_frac": 0.62,
+			"speed": 240.0,
+			"push": 0.085,
+			"credit": 0.35,
+			"color": [0.88, 0.78, 0.42, 0.95],
+			"size": 3.2,
+		}
+	prof["path_id"] = path_id
+	# Local watch density slightly tightens cooldown on claimed veins
+	if path_id != "" and bool(path_claims.get(path_id, false)):
+		var watch_n: int = int(buildings.get("watch_spire", 0))
+		if watch_n > 0:
+			prof["cooldown"] = max(0.45, float(prof.get("cooldown", 1.0)) * (1.0 - min(0.25, watch_n * 0.04)))
+			prof["credit"] = float(prof.get("credit", 0.35)) + min(0.2, watch_n * 0.03)
+	return prof
+
+func register_tower_hit(path_id: String, credit: float = 0.35, repelled: bool = false) -> void:
+	# Called from OutlandsMap when a projectile strikes a raid on a vein.
+	lane_combat_hits += 1
+	lane_combat_credit = min(6.0, lane_combat_credit + max(0.0, credit))
+	if repelled:
+		lane_combat_repels += 1
+		defense_strength = min(12.0, defense_strength + 0.15)
+		if lane_combat_repels == 1:
+			add_memory("lane_tower_first_repel", {"path_id": path_id, "hits": lane_combat_hits})
+			_log("A Watch Spire loosed light along the vein. The ash reeled back.", "story")
+	elif lane_combat_hits == 1:
+		add_memory("lane_tower_first_shot", {"path_id": path_id})
+	# Soft pulse so UI/map feels the hit without a new signal bus
+	if GameEvents.has_signal("sfx_cue"):
+		GameEvents.sfx_cue.emit("tower_hit", {"path_id": path_id, "repelled": repelled})
+
+func get_lane_combat_bonus() -> float:
+	# Portion of accumulated projectile credit that aids the next raid resolve.
+	return clamp(lane_combat_credit * 0.85, 0.0, 4.5)
+
+func consume_lane_combat_bonus(amount: float = -1.0) -> float:
+	var bonus: float = get_lane_combat_bonus() if amount < 0.0 else clamp(amount, 0.0, lane_combat_credit)
+	lane_combat_credit = max(0.0, lane_combat_credit - bonus)
+	return bonus
+
 func get_vein_defense_strength(path_id: String) -> float:
-	# Simple distribution for schematic map; can be per-claim + local tower contrib later
+	# Simple distribution for schematic map + R8 local tower profile contrib
 	# Now includes production labor assigned to defense (when labor active, map shows stronger via callers)
 	var base: float = defense_strength
 	if path_claims.get(path_id, false):
 		base += float(buildings.get("watch_spire", 0)) * 1.5
+		# Faction towers add local bite (projectile profile mirrors this)
+		if int(buildings.get("dread_foundry", 0)) > 0 or int(buildings.get("ash_binder", 0)) > 0:
+			base += 1.1
+		elif int(buildings.get("sanctuary_ward", 0)) > 0 or int(buildings.get("echo_choir", 0)) > 0:
+			base += 0.9
+		elif int(buildings.get("vein_ward", 0)) > 0:
+			base += 0.55
 	var def_labor: float = float(labor_assigned.get("defense", 0.0))
 	if def_labor > 0.0:
 		base += def_labor * 0.12
 	elif production_labor > 0.0:
 		base += production_labor * 0.04  # base labor helps all veins
+	# Recent lane hits briefly harden the vein
+	base += min(1.8, lane_combat_credit * 0.12)
 	return clamp(base, 0.0, 18.0)
 
 # Simple status for UI/Memory/map to show C&C queue progress (etas live via time ticks)
@@ -2359,6 +2484,9 @@ func save_game(slot: String = "auto") -> void:
 		"memory_shard_active": memory_shard_active,
 		"memory_shard_last": memory_shard_last,
 		"pending_raid": pending_raid,
+		"lane_combat_hits": lane_combat_hits,
+		"lane_combat_credit": lane_combat_credit,
+		"lane_combat_repels": lane_combat_repels,
 		# path_data is always from data/paths.json on load, not persisted
 	}
 	var path: String = "user://save_%s.json" % slot
@@ -2413,6 +2541,9 @@ func load_game(slot: String = "auto") -> bool:
 	defense_strength = float(data.get("defense_strength", defense_strength))
 	var _pr = data.get("pending_raid", {})
 	pending_raid = _pr if typeof(_pr) == TYPE_DICTIONARY else {}
+	lane_combat_hits = int(data.get("lane_combat_hits", 0))
+	lane_combat_credit = float(data.get("lane_combat_credit", 0.0))
+	lane_combat_repels = int(data.get("lane_combat_repels", 0))
 	# Polish: restore choice memory so reframes survive reload/offline
 	early_choice = data.get("early_choice", early_choice)
 	choice_history.clear()
@@ -2480,6 +2611,9 @@ func reset_to_new_game() -> void:
 	last_path_defense = 0.0
 	defense_strength = 0.0
 	pending_raid.clear()
+	lane_combat_hits = 0
+	lane_combat_credit = 0.0
+	lane_combat_repels = 0
 	production_queue.clear()
 	memory_entries.clear()
 	labor_boost = 0.0
